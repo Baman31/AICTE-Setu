@@ -88,9 +88,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
                     Sign In as {role.charAt(0).toUpperCase() + role.slice(1)}
                   </Button>
                   <div className="text-center">
-                    <Button variant="link" className="text-sm" data-testid="link-forgot-password">
+                    <button className="text-sm text-primary hover:underline" data-testid="link-forgot-password">
                       Forgot password?
-                    </Button>
+                    </button>
                   </div>
                 </TabsContent>
               ))}
@@ -100,9 +100,9 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
         <p className="text-center text-sm text-muted-foreground mt-6">
           Need help? Contact{" "}
-          <Button variant="link" className="p-0 h-auto text-sm">
+          <a href="mailto:support@aictesetu.gov.in" className="text-primary hover:underline">
             support@aictesetu.gov.in
-          </Button>
+          </a>
         </p>
       </div>
     </div>
