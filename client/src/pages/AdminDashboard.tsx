@@ -3,38 +3,39 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { FileText, Users, TrendingUp, Clock, CheckCircle, AlertTriangle } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 export default function AdminDashboard() {
-  //todo: remove mock functionality
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-dashboard"],
+    queryFn: () => api.getAdminDashboard(),
+  });
+
   const stats = [
-    { title: "Total Applications", value: "1,234", change: "+12%", icon: FileText },
-    { title: "Active Evaluators", value: "87", change: "+5%", icon: Users },
-    { title: "Approval Rate", value: "78%", change: "+3%", icon: TrendingUp },
-    { title: "Avg. Processing Time", value: "18 days", change: "-2 days", icon: Clock },
+    { title: "Total Applications", value: String(data?.stats.totalApplications || 0), change: "+12%", icon: FileText },
+    { title: "Active Evaluators", value: String(data?.stats.activeEvaluators || 0), change: "+5%", icon: Users },
+    { title: "Approval Rate", value: `${data?.stats.approvalRate || 0}%`, change: "+3%", icon: TrendingUp },
+    { title: "Avg. Processing Time", value: data?.stats.avgProcessingTime || "0 days", change: "-2 days", icon: Clock },
   ];
 
-  const chartData = [
-    { name: "Jan", applications: 120 },
-    { name: "Feb", applications: 145 },
-    { name: "Mar", applications: 132 },
-    { name: "Apr", applications: 168 },
-    { name: "May", applications: 189 },
-    { name: "Jun", applications: 210 },
-  ];
+  const chartData = data?.chartData || [];
 
-  const workflowStages = [
-    { stage: "Submitted", count: 45, color: "bg-blue-500" },
-    { stage: "In Scrutiny", count: 32, color: "bg-yellow-500" },
-    { stage: "Document Verification", count: 28, color: "bg-purple-500" },
-    { stage: "Under Evaluation", count: 18, color: "bg-orange-500" },
-    { stage: "Final Review", count: 12, color: "bg-green-500" },
-  ];
+  const workflowStages = (data?.workflowStages || []).map((w: any, i: number) => ({
+    stage: w.stage,
+    count: w.count,
+    color: ["bg-blue-500", "bg-yellow-500", "bg-purple-500", "bg-orange-500", "bg-green-500"][i % 5]
+  }));
 
   const alerts = [
     { id: 1, type: "warning", message: "15 applications pending evaluator assignment", icon: AlertTriangle },
     { id: 2, type: "info", message: "8 site visits scheduled for next week", icon: CheckCircle },
     { id: 3, type: "warning", message: "5 applications nearing deadline", icon: Clock },
   ];
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6" data-testid="admin-dashboard">

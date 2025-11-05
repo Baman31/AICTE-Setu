@@ -2,43 +2,26 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ClipboardCheck, Clock, Calendar, MapPin } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 export default function EvaluatorDashboard() {
-  //todo: remove mock functionality
+  const { data, isLoading } = useQuery({
+    queryKey: ["evaluator-dashboard"],
+    queryFn: () => api.getEvaluatorDashboard(),
+  });
+
   const stats = [
-    { title: "Assigned Applications", value: "8", icon: ClipboardCheck },
-    { title: "Pending Evaluation", value: "3", icon: Clock },
-    { title: "Upcoming Site Visits", value: "2", icon: Calendar },
+    { title: "Assigned Applications", value: String(data?.stats.assigned || 0), icon: ClipboardCheck },
+    { title: "Pending Evaluation", value: String(data?.stats.pending || 0), icon: Clock },
+    { title: "Upcoming Site Visits", value: String(data?.stats.upcoming || 0), icon: Calendar },
   ];
 
-  const assignments = [
-    {
-      id: "APP-2025-001234",
-      institutionName: "Vellore Institute of Technology",
-      applicationType: "New Course Addition",
-      location: "Vellore, Tamil Nadu",
-      deadline: "Jan 25, 2025",
-      priority: "high" as const,
-      courseName: "B.Tech in Artificial Intelligence"
-    },
-    {
-      id: "APP-2025-001198",
-      institutionName: "BITS Pilani",
-      applicationType: "Increase in Intake",
-      location: "Pilani, Rajasthan",
-      deadline: "Jan 28, 2025",
-      priority: "medium" as const,
-      courseName: "M.Tech in Embedded Systems"
-    },
-    {
-      id: "APP-2025-001145",
-      institutionName: "NIT Trichy",
-      applicationType: "New Institution Approval",
-      location: "Tiruchirappalli, Tamil Nadu",
-      deadline: "Feb 05, 2025",
-      priority: "low" as const
-    }
-  ];
+  const assignments = data?.assignments || [];
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6" data-testid="evaluator-dashboard">

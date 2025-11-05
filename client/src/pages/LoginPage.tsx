@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Building2, UserCheck, Shield } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface LoginPageProps {
   onLogin?: (role: string, email: string) => void;
@@ -16,17 +17,22 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
   const [password, setPassword] = useState("");
   const [, setLocation] = useLocation();
 
-  const handleLogin = (role: string) => {
-    console.log('Login attempted:', { role, email });
-    onLogin?.(role, email);
-    
-    // Navigate to the appropriate dashboard
-    if (role === "institution") {
-      setLocation("/dashboard");
-    } else if (role === "evaluator") {
-      setLocation("/evaluator/dashboard");
-    } else if (role === "admin") {
-      setLocation("/admin/dashboard");
+  const handleLogin = async (role: string) => {
+    try {
+      const response = await api.login(email, password);
+      onLogin?.(response.user.role, email);
+      
+      // Navigate to the appropriate dashboard based on user's actual role
+      if (response.user.role === "institution") {
+        setLocation("/dashboard");
+      } else if (response.user.role === "evaluator") {
+        setLocation("/evaluator/dashboard");
+      } else if (response.user.role === "admin") {
+        setLocation("/admin/dashboard");
+      }
+    } catch (error) {
+      console.error('Login failed:', error);
+      alert('Login failed. Please check your credentials.');
     }
   };
 

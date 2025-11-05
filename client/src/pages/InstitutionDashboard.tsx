@@ -2,44 +2,27 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import ApplicationCard from "@/components/ApplicationCard";
 import { Plus, FileText, Clock, CheckCircle, XCircle } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 
 export default function InstitutionDashboard() {
-  //todo: remove mock functionality
+  const { data, isLoading } = useQuery({
+    queryKey: ["institution-dashboard"],
+    queryFn: () => api.getInstitutionDashboard(),
+  });
+
   const stats = [
-    { title: "Total Applications", value: "12", icon: FileText, color: "text-blue-600" },
-    { title: "In Progress", value: "5", icon: Clock, color: "text-yellow-600" },
-    { title: "Approved", value: "6", icon: CheckCircle, color: "text-green-600" },
-    { title: "Rejected", value: "1", icon: XCircle, color: "text-red-600" },
+    { title: "Total Applications", value: String(data?.stats.total || 0), icon: FileText, color: "text-blue-600" },
+    { title: "In Progress", value: String(data?.stats.inProgress || 0), icon: Clock, color: "text-yellow-600" },
+    { title: "Approved", value: String(data?.stats.approved || 0), icon: CheckCircle, color: "text-green-600" },
+    { title: "Rejected", value: String(data?.stats.rejected || 0), icon: XCircle, color: "text-red-600" },
   ];
 
-  const applications = [
-    {
-      id: "APP-2025-001234",
-      institutionName: "Indian Institute of Technology, Mumbai",
-      applicationType: "New Institution Approval",
-      status: "under_evaluation" as const,
-      submittedDate: "Jan 15, 2025",
-      location: "Mumbai, Maharashtra",
-      courseName: "B.Tech in Computer Science"
-    },
-    {
-      id: "APP-2025-001189",
-      institutionName: "Indian Institute of Technology, Mumbai",
-      applicationType: "Increase in Intake",
-      status: "document_verification" as const,
-      submittedDate: "Jan 10, 2025",
-      location: "Mumbai, Maharashtra",
-      courseName: "M.Tech in Data Science"
-    },
-    {
-      id: "APP-2024-009876",
-      institutionName: "Indian Institute of Technology, Mumbai",
-      applicationType: "Extension of Approval",
-      status: "approved" as const,
-      submittedDate: "Dec 20, 2024",
-      location: "Mumbai, Maharashtra"
-    }
-  ];
+  const applications = data?.applications || [];
+
+  if (isLoading) {
+    return <div className="flex items-center justify-center h-screen">Loading...</div>;
+  }
 
   return (
     <div className="space-y-6" data-testid="institution-dashboard">
