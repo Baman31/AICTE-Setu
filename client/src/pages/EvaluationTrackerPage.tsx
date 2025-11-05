@@ -98,15 +98,32 @@ export default function EvaluationTrackerPage() {
 
         <Card data-testid="card-pending-documents">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Pending Documents</CardTitle>
+            <Clock className="h-4 w-4 text-yellow-600" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold" data-testid="text-overall-progress">{overallProgress}%</div>
-            <Progress value={overallProgress} className="mt-2" data-testid="progress-overall" />
+            <div className="text-2xl font-bold text-yellow-600" data-testid="text-pending-documents">{pendingDocuments}</div>
+            <p className="text-xs text-muted-foreground">Awaiting review</p>
           </CardContent>
         </Card>
       </div>
+
+      <Card data-testid="card-overall-progress">
+        <CardHeader>
+          <CardTitle className="text-sm font-medium">Overall Progress</CardTitle>
+          <CardDescription>Document review completion across all applications</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-2xl font-bold" data-testid="text-overall-progress">{overallProgress}%</span>
+            <TrendingUp className="h-5 w-5 text-muted-foreground" />
+          </div>
+          <Progress value={overallProgress} className="mt-2" data-testid="progress-overall" />
+          <p className="text-xs text-muted-foreground mt-2">
+            {approvedDocuments + rejectedDocuments} of {totalDocuments} documents reviewed
+          </p>
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="all" className="w-full">
         <TabsList data-testid="tabs-filter">
