@@ -1,11 +1,15 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { db } from "./db";
-import { users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages } from "../shared/schema";
+import { 
+  users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages,
+  loginSchema, registerSchema, createUserSchema, createApplicationSchema, assignEvaluatorSchema, submitEvaluationSchema, sendMessageSchema, updateApplicationSchema, updateApplicationStatusSchema
+} from "../shared/schema";
 import { eq, and, desc, count, sql } from "drizzle-orm";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import bcrypt from "bcrypt";
+import { fromZodError } from "zod-validation-error";
 
 const SessionStore = MemoryStore(session);
 
@@ -21,9 +25,13 @@ interface AuthRequest extends Request {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  if (!process.env.SESSION_SECRET && process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET environment variable must be set in production");
+  }
+
   app.use(
     session({
-      secret: process.env.SESSION_SECRET || "aicte-setu-secret-key-change-in-production",
+      secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
       resave: false,
       saveUninitialized: false,
       store: new SessionStore({
@@ -55,7 +63,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
-      const { email, password, name, role, institutionDetails } = req.body;
+      const validationResult = registerSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { email, password, name, role, institutionDetails } = validationResult.data;
       
       const existingUser = await db.query.users.findFirst({
         where: eq(users.email, email),
@@ -69,10 +82,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const [user] = await db
         .insert(users)
-        .values({ email, password: hashedPassword, name, role })
+        .values({ email, password: hashedPassword, name, role: "institution" })
         .returning();
 
-      if (role === "institution" && institutionDetails) {
+      if (institutionDetails) {
         await db.insert(institutions).values({
           userId: user.id,
           name: institutionDetails.name,
@@ -90,9 +103,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/admin/create-user", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const validationResult = createUserSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { email, password, name, role } = validationResult.data;
+
+      const existingUser = await db.query.users.findFirst({
+        where: eq(users.email, email),
+      });
+
+      if (existingUser) {
+        return res.status(400).json({ message: "Email already registered" });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+
+      const [user] = await db
+        .insert(users)
+        .values({ email, password: hashedPassword, name, role })
+        .returning();
+
+      const { password: _, ...userWithoutPassword } = user;
+      res.json({ user: userWithoutPassword });
+    } catch (error) {
+      console.error("Create user error:", error);
+      res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
   app.post("/api/auth/login", async (req: AuthRequest, res: Response) => {
     try {
-      const { email, password } = req.body;
+      const validationResult = loginSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { email, password } = validationResult.data;
 
       const user = await db.query.users.findFirst({
         where: eq(users.email, email),
@@ -278,6 +328,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/applications", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const validationResult = createApplicationSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { applicationType, institutionName, address, state, courseName, intake, description } = validationResult.data;
+
       const institution = await db.query.institutions.findFirst({
         where: eq(institutions.userId, req.session.userId!),
       });
@@ -293,13 +350,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .values({
           institutionId: institution.id,
           applicationNumber: appNumber,
-          applicationType: req.body.applicationType,
-          institutionName: req.body.institutionName || institution.name,
-          address: req.body.address || institution.address,
-          state: req.body.state || institution.state,
-          courseName: req.body.courseName,
-          intake: req.body.intake,
-          description: req.body.description,
+          applicationType,
+          institutionName: institutionName || institution.name,
+          address: address || institution.address,
+          state: state || institution.state,
+          courseName,
+          intake,
+          description,
           status: "draft",
         })
         .returning();
@@ -390,10 +447,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Forbidden" });
       }
 
+      const validationResult = updateApplicationSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
       const [updated] = await db
         .update(applications)
         .set({
-          ...req.body,
+          ...validationResult.data,
           updatedAt: new Date(),
         })
         .where(eq(applications.id, application.id))
@@ -403,6 +465,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Update application error:", error);
       res.status(500).json({ message: "Failed to update application" });
+    }
+  });
+
+  app.put("/api/admin/applications/:id/status", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const validationResult = updateApplicationStatusSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.applicationNumber, req.params.id),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const [updated] = await db
+        .update(applications)
+        .set({
+          status: validationResult.data.status,
+          updatedAt: new Date(),
+        })
+        .where(eq(applications.id, application.id))
+        .returning();
+
+      res.json({ application: updated });
+    } catch (error) {
+      console.error("Update application status error:", error);
+      res.status(500).json({ message: "Failed to update application status" });
     }
   });
 
@@ -451,7 +544,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/messages", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
-      const { applicationId, content } = req.body;
+      const validationResult = sendMessageSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { applicationId, content } = validationResult.data;
 
       const application = await db.query.applications.findFirst({
         where: eq(applications.id, applicationId),
@@ -479,7 +577,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/admin/assign-evaluator", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
-      const { applicationId, evaluatorId, priority, deadline } = req.body;
+      const validationResult = assignEvaluatorSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { applicationId, evaluatorId, priority, deadline } = validationResult.data;
 
       const [assignment] = await db
         .insert(evaluatorAssignments)
@@ -518,7 +621,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/evaluations", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
     try {
-      const { assignmentId, applicationId, score, comments, recommendation, siteVisitNotes } = req.body;
+      const validationResult = submitEvaluationSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { assignmentId, applicationId, score, comments, recommendation, siteVisitNotes } = validationResult.data;
 
       const [evaluation] = await db
         .insert(evaluations)

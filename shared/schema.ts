@@ -150,3 +150,82 @@ export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type TimelineStage = typeof timelineStages.$inferSelect;
 export type InsertTimelineStage = z.infer<typeof insertTimelineStageSchema>;
+
+export const loginSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+});
+
+export const registerSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  name: z.string().min(1, "Name is required"),
+  role: z.enum(["institution"]),
+  institutionDetails: z.object({
+    name: z.string().min(1),
+    address: z.string().min(1),
+    state: z.string().min(1),
+    phone: z.string().optional(),
+  }).optional(),
+});
+
+export const createUserSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  name: z.string().min(1, "Name is required"),
+  role: z.enum(["admin", "evaluator", "institution"]),
+});
+
+export const createApplicationSchema = z.object({
+  applicationType: z.enum(["new-institution", "intake-increase", "new-course", "eoa", "location-change"]),
+  institutionName: z.string().optional(),
+  address: z.string().optional(),
+  state: z.string().optional(),
+  courseName: z.string().optional(),
+  intake: z.number().int().positive().optional(),
+  description: z.string().optional(),
+});
+
+export const assignEvaluatorSchema = z.object({
+  applicationId: z.string().uuid(),
+  evaluatorId: z.string().uuid(),
+  priority: z.enum(["low", "medium", "high"]).optional(),
+  deadline: z.string().datetime().optional(),
+});
+
+export const submitEvaluationSchema = z.object({
+  assignmentId: z.string().uuid(),
+  applicationId: z.string().uuid(),
+  score: z.number().int().min(0).max(100).optional(),
+  comments: z.string().optional(),
+  recommendation: z.string().optional(),
+  siteVisitNotes: z.string().optional(),
+});
+
+export const sendMessageSchema = z.object({
+  applicationId: z.string().uuid(),
+  content: z.string().min(1, "Message content is required"),
+});
+
+export const updateApplicationSchema = z.object({
+  institutionName: z.string().optional(),
+  address: z.string().optional(),
+  state: z.string().optional(),
+  courseName: z.string().optional(),
+  intake: z.number().int().positive().optional(),
+  description: z.string().optional(),
+});
+
+export const updateApplicationStatusSchema = z.object({
+  status: z.enum(["draft", "submitted", "scrutiny", "document_verification", "under_evaluation", "site_visit_scheduled", "site_visit_completed", "final_review", "approved", "rejected", "conditional_approval"]),
+});
+
+export type LoginInput = z.infer<typeof loginSchema>;
+export type RegisterInput = z.infer<typeof registerSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
+export type AssignEvaluatorInput = z.infer<typeof assignEvaluatorSchema>;
+export type SubmitEvaluationInput = z.infer<typeof submitEvaluationSchema>;
+export type SendMessageInput = z.infer<typeof sendMessageSchema>;
+export type UpdateApplicationInput = z.infer<typeof updateApplicationSchema>;
+export type UpdateApplicationStatusInput = z.infer<typeof updateApplicationStatusSchema>;
