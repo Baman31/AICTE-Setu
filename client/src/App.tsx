@@ -13,6 +13,8 @@ import EvaluatorDashboard from "@/pages/EvaluatorDashboard";
 import AdminDashboard from "@/pages/AdminDashboard";
 import ApplicationFormPage from "@/pages/ApplicationFormPage";
 import ApplicationDetailPage from "@/pages/ApplicationDetailPage";
+import MessagesPage from "@/pages/MessagesPage";
+import SettingsPage from "@/pages/SettingsPage";
 import NotFound from "@/pages/not-found";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -61,6 +63,8 @@ function Router() {
               <Route path="/applications" component={InstitutionDashboard} />
               <Route path="/new-application" component={ApplicationFormPage} />
               <Route path="/application/:id" component={ApplicationDetailPage} />
+              <Route path="/messages" component={MessagesPage} />
+              <Route path="/settings" component={SettingsPage} />
               
               <Route path="/evaluator/dashboard" component={EvaluatorDashboard} />
               <Route path="/evaluator/applications" component={EvaluatorDashboard} />

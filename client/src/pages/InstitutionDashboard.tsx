@@ -63,7 +63,7 @@ export default function InstitutionDashboard() {
       <div>
         <h2 className="text-2xl font-medium mb-4">Recent Applications</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {applications.map(app => (
+          {applications.map((app: any) => (
             <ApplicationCard
               key={app.id}
               {...app}

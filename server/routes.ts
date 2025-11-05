@@ -237,6 +237,158 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/institution/applications", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
+    try {
+      const institution = await db.query.institutions.findFirst({
+        where: eq(institutions.userId, req.session.userId!),
+      });
+
+      if (!institution) {
+        return res.status(404).json({ message: "Institution not found" });
+      }
+
+      const allApplications = await db.query.applications.findMany({
+        where: eq(applications.institutionId, institution.id),
+        orderBy: [desc(applications.createdAt)],
+      });
+
+      res.json(allApplications);
+    } catch (error) {
+      console.error("Get applications error:", error);
+      res.status(500).json({ message: "Failed to fetch applications" });
+    }
+  });
+
+  app.get("/api/messages/:applicationId", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { applicationId } = req.params;
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const userRole = req.session.userRole;
+      const userId = req.session.userId!;
+
+      if (userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, userId),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Access denied to this application's messages" });
+        }
+      } else if (userRole === "evaluator") {
+        const assignment = await db.query.evaluatorAssignments.findFirst({
+          where: and(
+            eq(evaluatorAssignments.applicationId, applicationId),
+            eq(evaluatorAssignments.evaluatorId, userId)
+          ),
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Access denied to this application's messages" });
+        }
+      }
+
+      const allMessages = await db
+        .select({
+          id: messages.id,
+          applicationId: messages.applicationId,
+          senderId: messages.senderId,
+          senderName: users.name,
+          content: messages.content,
+          createdAt: messages.createdAt,
+        })
+        .from(messages)
+        .innerJoin(users, eq(messages.senderId, users.id))
+        .where(eq(messages.applicationId, applicationId))
+        .orderBy(messages.createdAt);
+
+      res.json(allMessages);
+    } catch (error) {
+      console.error("Get messages error:", error);
+      res.status(500).json({ message: "Failed to fetch messages" });
+    }
+  });
+
+  app.put("/api/settings/profile", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { name, email } = req.body;
+
+      if (!name && !email) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
+
+      const updateData: any = {};
+      if (name) updateData.name = name;
+      if (email) {
+        const existingUser = await db.query.users.findFirst({
+          where: and(
+            eq(users.email, email),
+            sql`${users.id} != ${req.session.userId}`
+          ),
+        });
+
+        if (existingUser) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+        updateData.email = email;
+      }
+
+      const [updatedUser] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, req.session.userId!))
+        .returning();
+
+      const { password: _, ...userWithoutPassword } = updatedUser;
+      res.json({ user: userWithoutPassword });
+    } catch (error) {
+      console.error("Update profile error:", error);
+      res.status(500).json({ message: "Failed to update profile" });
+    }
+  });
+
+  app.put("/api/settings/password", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { currentPassword, newPassword } = req.body;
+
+      if (!currentPassword || !newPassword) {
+        return res.status(400).json({ message: "Current and new passwords are required" });
+      }
+
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, req.session.userId!),
+      });
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const validPassword = await bcrypt.compare(currentPassword, user.password);
+      if (!validPassword) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
+
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+      await db
+        .update(users)
+        .set({ password: hashedPassword })
+        .where(eq(users.id, req.session.userId!));
+
+      res.json({ message: "Password updated successfully" });
+    } catch (error) {
+      console.error("Change password error:", error);
+      res.status(500).json({ message: "Failed to change password" });
+    }
+  });
+
   app.get("/api/evaluator/dashboard", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
     try {
       const assignments = await db
@@ -280,6 +432,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Evaluator dashboard error:", error);
       res.status(500).json({ message: "Failed to fetch evaluator dashboard data" });
+    }
+  });
+
+  app.get("/api/evaluator/applications", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
+    try {
+      const assignedApps = await db
+        .select({
+          id: applications.id,
+          applicationNumber: applications.applicationNumber,
+          institutionId: applications.institutionId,
+          applicationType: applications.applicationType,
+          status: applications.status,
+          institutionName: applications.institutionName,
+          address: applications.address,
+          state: applications.state,
+          courseName: applications.courseName,
+          intake: applications.intake,
+          description: applications.description,
+          submittedAt: applications.submittedAt,
+          createdAt: applications.createdAt,
+          updatedAt: applications.updatedAt,
+        })
+        .from(evaluatorAssignments)
+        .innerJoin(applications, eq(evaluatorAssignments.applicationId, applications.id))
+        .where(eq(evaluatorAssignments.evaluatorId, req.session.userId!))
+        .orderBy(desc(applications.createdAt));
+
+      res.json(assignedApps);
+    } catch (error) {
+      console.error("Get evaluator applications error:", error);
+      res.status(500).json({ message: "Failed to fetch applications" });
     }
   });
 
@@ -559,11 +742,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Application not found" });
       }
 
+      const userRole = req.session.userRole;
+      const userId = req.session.userId!;
+
+      if (userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, userId),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Access denied to send messages for this application" });
+        }
+      } else if (userRole === "evaluator") {
+        const assignment = await db.query.evaluatorAssignments.findFirst({
+          where: and(
+            eq(evaluatorAssignments.applicationId, applicationId),
+            eq(evaluatorAssignments.evaluatorId, userId)
+          ),
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Access denied to send messages for this application" });
+        }
+      }
+
       const [message] = await db
         .insert(messages)
         .values({
           applicationId,
-          senderId: req.session.userId!,
+          senderId: userId,
           content,
         })
         .returning();
