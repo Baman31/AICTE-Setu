@@ -35,11 +35,17 @@ export async function connectDB(): Promise<Db> {
 async function seedIfNeeded(database: Db) {
   if (isSeeded) return;
   
+  if (process.env.NODE_ENV === 'production') {
+    console.log("⚠️ Production environment detected - auto-seeding disabled for security.");
+    isSeeded = true;
+    return;
+  }
+  
   try {
     const userCount = await database.collection('users').countDocuments();
     
     if (userCount === 0) {
-      console.log("📦 Database is empty, seeding with initial data...");
+      console.log("📦 Development mode: Database is empty, seeding with test data...");
       await seedDatabase(database);
       isSeeded = true;
     } else {
