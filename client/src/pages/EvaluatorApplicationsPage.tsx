@@ -1,65 +1,72 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ClipboardCheck, Clock, Calendar, MapPin } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Clock, MapPin, Search, Filter } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { useLocation } from "wouter";
+import { useState } from "react";
 
-export default function EvaluatorDashboard() {
+export default function EvaluatorApplicationsPage() {
   const [, setLocation] = useLocation();
+  const [searchTerm, setSearchTerm] = useState("");
+  
   const { data, isLoading } = useQuery({
     queryKey: ["evaluator-dashboard"],
     queryFn: () => api.getEvaluatorDashboard(),
   });
 
-  const stats = [
-    { title: "Assigned Applications", value: String(data?.stats.assigned || 0), icon: ClipboardCheck },
-    { title: "Pending Evaluation", value: String(data?.stats.pending || 0), icon: Clock },
-    { title: "Upcoming Site Visits", value: String(data?.stats.upcoming || 0), icon: Calendar },
-  ];
-
   const assignments = data?.assignments || [];
+  
+  const filteredAssignments = assignments.filter((app: any) =>
+    app.institutionName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    app.id?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    app.applicationType?.toLowerCase().includes(searchTerm.toLowerCase())
+  );
 
   if (isLoading) {
     return <div className="flex items-center justify-center h-screen">Loading...</div>;
   }
 
   return (
-    <div className="space-y-6" data-testid="evaluator-dashboard">
+    <div className="space-y-6" data-testid="evaluator-applications-page">
       <div>
-        <h1 className="text-4xl font-medium tracking-tight mb-2">Evaluator Dashboard</h1>
+        <h1 className="text-4xl font-medium tracking-tight mb-2">Assigned Applications</h1>
         <p className="text-muted-foreground">
-          Review and evaluate assigned applications
+          Review and evaluate applications assigned to you
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {stats.map((stat) => {
-          const Icon = stat.icon;
-          return (
-            <Card key={stat.title}>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  {stat.title}
-                </CardTitle>
-                <Icon className="w-4 h-4 text-primary" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-3xl font-bold" data-testid={`stat-${stat.title.toLowerCase().replace(/\s+/g, '-')}`}>
-                  {stat.value}
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
+      <div className="flex items-center gap-4">
+        <div className="relative flex-1 max-w-md">
+          <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            placeholder="Search by institution, application number, or type..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+            data-testid="input-search-applications"
+          />
+        </div>
+        <Button variant="outline" data-testid="button-filter">
+          <Filter className="w-4 h-4 mr-2" />
+          Filter
+        </Button>
       </div>
 
-      <div>
-        <h2 className="text-2xl font-medium mb-4">Assigned Applications</h2>
-        <div className="space-y-4">
-          {assignments.map((app: any) => (
-            <Card key={app.id} className="hover-elevate transition-shadow" data-testid={`card-assignment-${app.id}`}>
+      <div className="grid grid-cols-1 gap-4">
+        {filteredAssignments.length === 0 ? (
+          <Card>
+            <CardContent className="p-12 text-center">
+              <p className="text-muted-foreground">
+                {searchTerm ? "No applications found matching your search." : "No applications assigned yet."}
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          filteredAssignments.map((app: any) => (
+            <Card key={app.id} className="hover-elevate transition-shadow" data-testid={`card-application-${app.id}`}>
               <CardContent className="p-6">
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -72,7 +79,12 @@ export default function EvaluatorDashboard() {
                         {app.priority} Priority
                       </Badge>
                     </div>
-                    <p className="text-sm text-muted-foreground mb-1">{app.applicationType}</p>
+                    <p className="text-sm font-medium text-muted-foreground mb-1">
+                      Application #{app.id}
+                    </p>
+                    <p className="text-sm text-muted-foreground mb-1 capitalize">
+                      {app.applicationType?.replace(/-/g, ' ')}
+                    </p>
                     {app.courseName && (
                       <p className="text-sm text-muted-foreground mb-3">{app.courseName}</p>
                     )}
@@ -90,7 +102,7 @@ export default function EvaluatorDashboard() {
                   <div className="flex gap-2">
                     <Button 
                       variant="outline" 
-                      size="sm"
+                      size="sm" 
                       onClick={() => setLocation(`/application/${app.id}`)}
                       data-testid={`button-review-${app.id}`}
                     >
@@ -107,8 +119,8 @@ export default function EvaluatorDashboard() {
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
+          ))
+        )}
       </div>
     </div>
   );

@@ -5,88 +5,67 @@ import StatusBadge from "@/components/StatusBadge";
 import TimelineView from "@/components/TimelineView";
 import MessagingPanel from "@/components/MessagingPanel";
 import { ArrowLeft, Download, FileText, Image as ImageIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/lib/api";
+import { useRoute, useLocation } from "wouter";
 
 export default function ApplicationDetailPage() {
-  //todo: remove mock functionality
-  const application = {
-    id: "APP-2025-001234",
-    institutionName: "Indian Institute of Technology, Mumbai",
-    applicationType: "New Institution Approval",
-    status: "under_evaluation" as const,
-    submittedDate: "Jan 15, 2025",
-    location: "Mumbai, Maharashtra",
-    courseName: "B.Tech in Computer Science",
-    intake: 120
-  };
+  const [, params] = useRoute("/application/:id");
+  const [, setLocation] = useLocation();
+  const applicationId = params?.id || "";
 
-  const timelineStages = [
-    {
-      id: "1",
-      title: "Application Submitted",
-      description: "Application received and under initial review",
-      date: "Jan 15, 2025, 10:30 AM",
-      status: "completed" as const
-    },
-    {
-      id: "2",
-      title: "Initial Scrutiny",
-      description: "Basic compliance checks completed",
-      date: "Jan 16, 2025, 2:15 PM",
-      status: "completed" as const
-    },
-    {
-      id: "3",
-      title: "Document Verification",
-      description: "AI-powered document analysis completed with 95% compliance",
-      date: "Jan 17, 2025, 11:00 AM",
-      status: "completed" as const
-    },
-    {
-      id: "4",
-      title: "Evaluator Assignment",
-      description: "Expert evaluator assigned for detailed review",
-      date: "Jan 18, 2025",
-      assignedTo: "Dr. Rajesh Kumar",
-      status: "current" as const
-    },
-    {
-      id: "5",
-      title: "Site Visit & Evaluation",
-      description: "Pending site visit scheduling",
-      status: "pending" as const
-    },
-    {
-      id: "6",
-      title: "Final Approval",
-      status: "pending" as const
-    }
-  ];
+  const { data: applicationData, isLoading } = useQuery({
+    queryKey: ["/api/applications", applicationId],
+    queryFn: () => api.getApplication(applicationId),
+    enabled: !!applicationId,
+  });
 
-  const documents = [
-    { name: "Affidavit_Trust_Deed.pdf", size: "2.4 MB", status: "Verified" },
-    { name: "Land_Documents.pdf", size: "5.1 MB", status: "Verified" },
-    { name: "Building_Plan_NOC.pdf", size: "3.8 MB", status: "Verified" },
-    { name: "Infrastructure_Photos.zip", size: "15.2 MB", status: "Under Review" }
-  ];
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading application...</p>
+        </div>
+      </div>
+    );
+  }
 
-  const messages = [
-    {
-      id: "1",
-      sender: "Dr. Rajesh Kumar",
-      senderRole: "Evaluator",
-      content: "I have reviewed the infrastructure documents. Could you please provide additional photos of the laboratory equipment?",
-      timestamp: "Jan 18, 2025, 10:30 AM",
-      isCurrentUser: false
-    },
-    {
-      id: "2",
-      sender: "Current User",
-      senderRole: "Institution",
-      content: "Thank you for the feedback. I will upload the additional laboratory photos by end of day today.",
-      timestamp: "Jan 18, 2025, 11:15 AM",
-      isCurrentUser: true
-    }
-  ];
+  if (!applicationData?.application) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-center">
+          <p className="text-xl font-medium mb-2">Application not found</p>
+          <Button onClick={() => setLocation("/dashboard")}>Go to Dashboard</Button>
+        </div>
+      </div>
+    );
+  }
+
+  const application = applicationData.application;
+  const documents = applicationData.documents || [];
+  const messages = applicationData.messages || [];
+  const timelineStages = applicationData.timeline || [];
+
+  // Format timeline stages for the TimelineView component
+  const formattedTimeline = timelineStages.map((stage: any) => ({
+    id: stage.id,
+    title: stage.title,
+    description: stage.description,
+    date: stage.completedAt ? new Date(stage.completedAt).toLocaleDateString() : undefined,
+    assignedTo: stage.assignedTo,
+    status: stage.status
+  }));
+
+  // Format messages for MessagingPanel
+  const formattedMessages = messages.map((msg: any) => ({
+    id: msg.id,
+    sender: msg.senderName,
+    senderRole: msg.senderRole,
+    content: msg.content,
+    timestamp: new Date(msg.createdAt).toLocaleString(),
+    isCurrentUser: false
+  }));
 
   return (
     <div className="space-y-6" data-testid="application-detail-page">
@@ -148,7 +127,7 @@ export default function ApplicationDetailPage() {
               <CardTitle>Application Progress</CardTitle>
             </CardHeader>
             <CardContent>
-              <TimelineView stages={timelineStages} />
+              <TimelineView stages={formattedTimeline} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -169,8 +148,8 @@ export default function ApplicationDetailPage() {
                     <div className="flex items-center gap-3">
                       <FileText className="w-8 h-8 text-primary" />
                       <div>
-                        <p className="font-medium">{doc.name}</p>
-                        <p className="text-sm text-muted-foreground">{doc.size} • {doc.status}</p>
+                        <p className="font-medium">{doc.fileName}</p>
+                        <p className="text-sm text-muted-foreground">{doc.category} • {doc.status || 'Pending'}</p>
                       </div>
                     </div>
                     <Button variant="outline" size="sm" data-testid={`button-download-${index}`}>
@@ -186,7 +165,7 @@ export default function ApplicationDetailPage() {
 
         <TabsContent value="messages" className="mt-6">
           <Card className="h-[600px] flex flex-col">
-            <MessagingPanel applicationId={application.id} messages={messages} />
+            <MessagingPanel applicationId={application.id} messages={formattedMessages} />
           </Card>
         </TabsContent>
       </Tabs>

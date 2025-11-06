@@ -108,11 +108,22 @@ export default function AppSidebar({ userRole }: AppSidebarProps) {
             <SidebarMenu>
               <SidebarMenuItem>
                 <SidebarMenuButton
-                  onClick={() => console.log('Settings clicked')}
+                  asChild
+                  isActive={location === "/settings" || location === "/evaluator/settings" || location === "/admin/settings"}
+                  onClick={() => {
+                    const settingsPath = userRole === "institution" 
+                      ? "/settings" 
+                      : userRole === "evaluator" 
+                      ? "/evaluator/settings" 
+                      : "/admin/settings";
+                    setLocation(settingsPath);
+                  }}
                   data-testid="nav-settings"
                 >
-                  <Settings className="w-4 h-4" />
-                  <span>Settings</span>
+                  <a href={userRole === "institution" ? "/settings" : userRole === "evaluator" ? "/evaluator/settings" : "/admin/settings"}>
+                    <Settings className="w-4 h-4" />
+                    <span>Settings</span>
+                  </a>
                 </SidebarMenuButton>
               </SidebarMenuItem>
             </SidebarMenu>

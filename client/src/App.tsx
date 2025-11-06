@@ -10,6 +10,7 @@ import ThemeToggle from "@/components/ThemeToggle";
 import LoginPage from "@/pages/LoginPage";
 import InstitutionDashboard from "@/pages/InstitutionDashboard";
 import EvaluatorDashboard from "@/pages/EvaluatorDashboard";
+import EvaluatorApplicationsPage from "@/pages/EvaluatorApplicationsPage";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsersPage from "@/pages/AdminUsersPage";
 import ApplicationDetailPage from "@/pages/ApplicationDetailPage";
@@ -117,15 +118,17 @@ function Router() {
               <Route path="/settings" component={SettingsPage} />
               
               <Route path="/evaluator/dashboard" component={EvaluatorDashboard} />
-              <Route path="/evaluator/applications" component={EvaluatorDashboard} />
+              <Route path="/evaluator/applications" component={EvaluatorApplicationsPage} />
               <Route path="/evaluator/tracker" component={EvaluationTrackerPage} />
               <Route path="/evaluator/messages" component={MessagesPage} />
+              <Route path="/evaluator/settings" component={SettingsPage} />
               
               <Route path="/admin/dashboard" component={AdminDashboard} />
               <Route path="/admin/users" component={AdminUsersPage} />
               <Route path="/admin/applications" component={InstitutionDashboard} />
               <Route path="/admin/tracker" component={EvaluationTrackerPage} />
               <Route path="/admin/messages" component={MessagesPage} />
+              <Route path="/admin/settings" component={SettingsPage} />
               
               <Route component={NotFound} />
             </Switch>
