@@ -1,10 +1,8 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, pgEnum, boolean, real, json } from "drizzle-orm/pg-core";
-import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
+import { ObjectId } from "mongodb";
 
-export const userRoleEnum = pgEnum("user_role", ["institution", "evaluator", "admin"]);
-export const applicationStatusEnum = pgEnum("application_status", [
+export const userRoleValues = ["institution", "evaluator", "admin"] as const;
+export const applicationStatusValues = [
   "draft",
   "submitted",
   "scrutiny",
@@ -16,254 +14,523 @@ export const applicationStatusEnum = pgEnum("application_status", [
   "approved",
   "rejected",
   "conditional_approval"
-]);
-export const applicationTypeEnum = pgEnum("application_type", [
+] as const;
+export const applicationTypeValues = [
   "new-institution",
   "intake-increase",
   "new-course",
   "eoa",
   "location-change"
-]);
-export const priorityEnum = pgEnum("priority", ["low", "medium", "high"]);
-export const stageStatusEnum = pgEnum("stage_status", ["pending", "current", "completed"]);
-export const assignmentStatusEnum = pgEnum("assignment_status", ["pending", "in_progress", "completed", "overdue"]);
-export const notificationTypeEnum = pgEnum("notification_type", ["info", "warning", "success", "error", "assignment", "status_update"]);
-export const facilityTypeEnum = pgEnum("facility_type", ["classroom", "laboratory", "library", "workshop", "sports", "hostel", "cafeteria", "auditorium", "other"]);
+] as const;
+export const priorityValues = ["low", "medium", "high"] as const;
+export const stageStatusValues = ["pending", "current", "completed"] as const;
+export const assignmentStatusValues = ["pending", "in_progress", "completed", "overdue"] as const;
+export const notificationTypeValues = ["info", "warning", "success", "error", "assignment", "status_update"] as const;
+export const facilityTypeValues = ["classroom", "laboratory", "library", "workshop", "sports", "hostel", "cafeteria", "auditorium", "other"] as const;
 
-export const users = pgTable("users", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  email: text("email").notNull().unique(),
-  password: text("password").notNull(),
-  role: userRoleEnum("role").notNull(),
-  name: text("name").notNull(),
-  fullname: text("fullname"),
-  phone: text("phone"),
-  lastLogin: timestamp("last_login"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export interface User {
+  _id: string;
+  email: string;
+  password: string;
+  role: typeof userRoleValues[number];
+  name: string;
+  fullname?: string;
+  phone?: string;
+  lastLogin?: Date;
+  createdAt: Date;
+}
+
+export interface Institution {
+  _id: string;
+  userId: string;
+  name: string;
+  address: string;
+  state: string;
+  affiliationType?: string;
+  contactPerson?: string;
+  contactEmail: string;
+  contactPhone?: string;
+  establishedDate?: Date;
+  createdAt: Date;
+}
+
+export interface Application {
+  _id: string;
+  applicationNumber: string;
+  institutionId: string;
+  applicationType: typeof applicationTypeValues[number];
+  programType?: string;
+  status: typeof applicationStatusValues[number];
+  institutionName: string;
+  address: string;
+  state: string;
+  courseName?: string;
+  intake?: number;
+  description?: string;
+  formData?: any;
+  processingTime?: number;
+  submittedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Document {
+  _id: string;
+  applicationId: string;
+  category: string;
+  fileName: string;
+  fileSize: string;
+  fileUrl: string;
+  status: string;
+  verified: boolean;
+  uploadedAt: Date;
+}
+
+export interface EvaluatorAssignment {
+  _id: string;
+  applicationId: string;
+  evaluatorId: string;
+  priority: typeof priorityValues[number];
+  status?: typeof assignmentStatusValues[number];
+  deadline?: Date;
+  assignedAt: Date;
+  completedAt?: Date;
+}
+
+export interface Evaluation {
+  _id: string;
+  assignmentId: string;
+  applicationId: string;
+  evaluatorId: string;
+  score?: number;
+  comments?: any;
+  recommendation?: string;
+  approved?: boolean;
+  siteVisitNotes?: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface Message {
+  _id: string;
+  applicationId: string;
+  senderId: string;
+  content: string;
+  createdAt: Date;
+}
+
+export interface TimelineStage {
+  _id: string;
+  applicationId: string;
+  title: string;
+  description?: string;
+  status: typeof stageStatusValues[number];
+  assignedTo?: string;
+  stageStartDate?: Date;
+  timeline?: any;
+  daysElapsed?: number;
+  completedAt?: Date;
+  createdAt: Date;
+}
+
+export interface Notification {
+  _id: string;
+  userId: string;
+  type: typeof notificationTypeValues[number];
+  message: string;
+  isRead: boolean;
+  sentAt: Date;
+}
+
+export interface AuditLog {
+  _id: string;
+  userId?: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  changes?: any;
+  timestamp: Date;
+}
+
+export interface AnalyticsMetric {
+  _id: string;
+  metricType: string;
+  recordDate: Date;
+  data?: any;
+  value?: number;
+}
+
+export interface InfrastructureImage {
+  _id: string;
+  applicationId: string;
+  imageUrl: string;
+  facilityType: typeof facilityTypeValues[number];
+  geoCoordinates?: any;
+  uploadDate: Date;
+}
+
+export interface CvAnalysis {
+  _id: string;
+  imageId: string;
+  dimensions?: any;
+  detectedFeatures?: any;
+  meetsStandards?: boolean;
+  accuracyScore?: number;
+  remarks?: string;
+  analyzedAt: Date;
+}
+
+export interface VerificationResult {
+  _id: string;
+  documentId: string;
+  verificationType: string;
+  confidenceScore?: number;
+  extractedData?: any;
+  isCompliant?: boolean;
+  remarks?: string;
+  verifiedAt: Date;
+}
+
+export interface Evaluator {
+  _id: string;
+  userId: string;
+  expertise?: string;
+  department?: string;
+  currentWorkload: number;
+  avgReviewTime?: number;
+  available: boolean;
+  createdAt: Date;
+}
+
+export const insertUserSchema = z.object({
+  email: z.string().email(),
+  password: z.string(),
+  role: z.enum(userRoleValues),
+  name: z.string(),
+  fullname: z.string().optional(),
+  phone: z.string().optional(),
+  lastLogin: z.date().optional(),
 });
 
-export const institutions = pgTable("institutions", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  name: text("name").notNull(),
-  address: text("address").notNull(),
-  state: text("state").notNull(),
-  affiliationType: text("affiliation_type"),
-  contactPerson: text("contact_person"),
-  contactEmail: text("contact_email").notNull(),
-  contactPhone: text("contact_phone"),
-  establishedDate: timestamp("established_date"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const selectUserSchema = z.object({
+  _id: z.string(),
+  email: z.string(),
+  password: z.string(),
+  role: z.enum(userRoleValues),
+  name: z.string(),
+  fullname: z.string().optional(),
+  phone: z.string().optional(),
+  lastLogin: z.date().optional(),
+  createdAt: z.date(),
 });
 
-export const applications = pgTable("applications", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationNumber: text("application_number").notNull().unique(),
-  institutionId: varchar("institution_id").notNull().references(() => institutions.id),
-  applicationType: applicationTypeEnum("application_type").notNull(),
-  programType: text("program_type"),
-  status: applicationStatusEnum("status").notNull().default("draft"),
-  institutionName: text("institution_name").notNull(),
-  address: text("address").notNull(),
-  state: text("state").notNull(),
-  courseName: text("course_name"),
-  intake: integer("intake"),
-  description: text("description"),
-  formData: json("form_data"),
-  processingTime: real("processing_time"),
-  submittedAt: timestamp("submitted_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const insertInstitutionSchema = z.object({
+  userId: z.string(),
+  name: z.string(),
+  address: z.string(),
+  state: z.string(),
+  affiliationType: z.string().optional(),
+  contactPerson: z.string().optional(),
+  contactEmail: z.string().email(),
+  contactPhone: z.string().optional(),
+  establishedDate: z.date().optional(),
 });
 
-export const documents = pgTable("documents", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  category: text("category").notNull(),
-  fileName: text("file_name").notNull(),
-  fileSize: text("file_size").notNull(),
-  fileUrl: text("file_url").notNull(),
-  status: text("status").notNull().default("pending"),
-  verified: boolean("verified").default(false),
-  uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
+export const selectInstitutionSchema = z.object({
+  _id: z.string(),
+  userId: z.string(),
+  name: z.string(),
+  address: z.string(),
+  state: z.string(),
+  affiliationType: z.string().optional(),
+  contactPerson: z.string().optional(),
+  contactEmail: z.string().email(),
+  contactPhone: z.string().optional(),
+  establishedDate: z.date().optional(),
+  createdAt: z.date(),
 });
 
-export const evaluatorAssignments = pgTable("evaluator_assignments", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  evaluatorId: varchar("evaluator_id").notNull().references(() => users.id),
-  priority: priorityEnum("priority").notNull().default("medium"),
-  status: assignmentStatusEnum("status").default("pending"),
-  deadline: timestamp("deadline"),
-  assignedAt: timestamp("assigned_at").defaultNow().notNull(),
-  completedAt: timestamp("completed_at"),
+export const insertApplicationSchema = z.object({
+  institutionId: z.string(),
+  applicationType: z.enum(applicationTypeValues),
+  programType: z.string().optional(),
+  status: z.enum(applicationStatusValues).default("draft"),
+  institutionName: z.string(),
+  address: z.string(),
+  state: z.string(),
+  courseName: z.string().optional(),
+  intake: z.number().int().optional(),
+  description: z.string().optional(),
+  formData: z.any().optional(),
+  processingTime: z.number().optional(),
+  submittedAt: z.date().optional(),
 });
 
-export const evaluations = pgTable("evaluations", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  assignmentId: varchar("assignment_id").notNull().references(() => evaluatorAssignments.id),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  evaluatorId: varchar("evaluator_id").notNull().references(() => users.id),
-  score: real("score"),
-  comments: json("comments"),
-  recommendation: text("recommendation"),
-  approved: boolean("approved"),
-  siteVisitNotes: text("site_visit_notes"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+export const selectApplicationSchema = z.object({
+  _id: z.string(),
+  applicationNumber: z.string(),
+  institutionId: z.string(),
+  applicationType: z.enum(applicationTypeValues),
+  programType: z.string().optional(),
+  status: z.enum(applicationStatusValues),
+  institutionName: z.string(),
+  address: z.string(),
+  state: z.string(),
+  courseName: z.string().optional(),
+  intake: z.number().int().optional(),
+  description: z.string().optional(),
+  formData: z.any().optional(),
+  processingTime: z.number().optional(),
+  submittedAt: z.date().optional(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
 });
 
-export const messages = pgTable("messages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  senderId: varchar("sender_id").notNull().references(() => users.id),
-  content: text("content").notNull(),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const insertDocumentSchema = z.object({
+  applicationId: z.string(),
+  category: z.string(),
+  fileName: z.string(),
+  fileSize: z.string(),
+  fileUrl: z.string(),
+  status: z.string().default("pending"),
+  verified: z.boolean().default(false),
 });
 
-export const timelineStages = pgTable("timeline_stages", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  title: text("title").notNull(),
-  description: text("description"),
-  status: stageStatusEnum("status").notNull().default("pending"),
-  assignedTo: text("assigned_to"),
-  stageStartDate: timestamp("stage_start_date"),
-  timeline: json("timeline"),
-  daysElapsed: integer("days_elapsed"),
-  completedAt: timestamp("completed_at"),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const selectDocumentSchema = z.object({
+  _id: z.string(),
+  applicationId: z.string(),
+  category: z.string(),
+  fileName: z.string(),
+  fileSize: z.string(),
+  fileUrl: z.string(),
+  status: z.string(),
+  verified: z.boolean(),
+  uploadedAt: z.date(),
 });
 
-export const notifications = pgTable("notifications", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  type: notificationTypeEnum("type").notNull().default("info"),
-  message: text("message").notNull(),
-  isRead: boolean("is_read").default(false),
-  sentAt: timestamp("sent_at").defaultNow().notNull(),
+export const insertEvaluatorAssignmentSchema = z.object({
+  applicationId: z.string(),
+  evaluatorId: z.string(),
+  priority: z.enum(priorityValues).default("medium"),
+  status: z.enum(assignmentStatusValues).optional(),
+  deadline: z.date().optional(),
+  completedAt: z.date().optional(),
 });
 
-export const auditLogs = pgTable("audit_logs", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").references(() => users.id),
-  action: text("action").notNull(),
-  entityType: text("entity_type").notNull(),
-  entityId: varchar("entity_id"),
-  changes: json("changes"),
-  timestamp: timestamp("timestamp").defaultNow().notNull(),
+export const selectEvaluatorAssignmentSchema = z.object({
+  _id: z.string(),
+  applicationId: z.string(),
+  evaluatorId: z.string(),
+  priority: z.enum(priorityValues),
+  status: z.enum(assignmentStatusValues).optional(),
+  deadline: z.date().optional(),
+  assignedAt: z.date(),
+  completedAt: z.date().optional(),
 });
 
-export const analyticsMetrics = pgTable("analytics_metrics", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  metricType: text("metric_type").notNull(),
-  recordDate: timestamp("record_date").defaultNow().notNull(),
-  data: json("data"),
-  value: real("value"),
+export const insertEvaluationSchema = z.object({
+  assignmentId: z.string(),
+  applicationId: z.string(),
+  evaluatorId: z.string(),
+  score: z.number().optional(),
+  comments: z.any().optional(),
+  recommendation: z.string().optional(),
+  approved: z.boolean().optional(),
+  siteVisitNotes: z.string().optional(),
 });
 
-export const infrastructureImages = pgTable("infrastructure_images", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  applicationId: varchar("application_id").notNull().references(() => applications.id),
-  imageUrl: text("image_url").notNull(),
-  facilityType: facilityTypeEnum("facility_type").notNull(),
-  geoCoordinates: json("geo_coordinates"),
-  uploadDate: timestamp("upload_date").defaultNow().notNull(),
+export const selectEvaluationSchema = z.object({
+  _id: z.string(),
+  assignmentId: z.string(),
+  applicationId: z.string(),
+  evaluatorId: z.string(),
+  score: z.number().optional(),
+  comments: z.any().optional(),
+  recommendation: z.string().optional(),
+  approved: z.boolean().optional(),
+  siteVisitNotes: z.string().optional(),
+  createdAt: z.date(),
+  updatedAt: z.date(),
 });
 
-export const cvAnalysis = pgTable("cv_analysis", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  imageId: varchar("image_id").notNull().references(() => infrastructureImages.id),
-  dimensions: json("dimensions"),
-  detectedFeatures: json("detected_features"),
-  meetsStandards: boolean("meets_standards"),
-  accuracyScore: real("accuracy_score"),
-  remarks: text("remarks"),
-  analyzedAt: timestamp("analyzed_at").defaultNow().notNull(),
+export const insertMessageSchema = z.object({
+  applicationId: z.string(),
+  senderId: z.string(),
+  content: z.string(),
 });
 
-export const verificationResults = pgTable("verification_results", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  documentId: varchar("document_id").notNull().references(() => documents.id),
-  verificationType: text("verification_type").notNull(),
-  confidenceScore: real("confidence_score"),
-  extractedData: json("extracted_data"),
-  isCompliant: boolean("is_compliant"),
-  remarks: text("remarks"),
-  verifiedAt: timestamp("verified_at").defaultNow().notNull(),
+export const selectMessageSchema = z.object({
+  _id: z.string(),
+  applicationId: z.string(),
+  senderId: z.string(),
+  content: z.string(),
+  createdAt: z.date(),
 });
 
-export const evaluators = pgTable("evaluators", {
-  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  userId: varchar("user_id").notNull().references(() => users.id),
-  expertise: text("expertise"),
-  department: text("department"),
-  currentWorkload: integer("current_workload").default(0),
-  avgReviewTime: real("avg_review_time"),
-  available: boolean("available").default(true),
-  createdAt: timestamp("created_at").defaultNow().notNull(),
+export const insertTimelineStageSchema = z.object({
+  applicationId: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+  status: z.enum(stageStatusValues).default("pending"),
+  assignedTo: z.string().optional(),
+  stageStartDate: z.date().optional(),
+  timeline: z.any().optional(),
+  daysElapsed: z.number().int().optional(),
+  completedAt: z.date().optional(),
 });
 
-export const insertUserSchema = createInsertSchema(users).omit({ id: true, createdAt: true });
-export const selectUserSchema = createSelectSchema(users);
-export const insertInstitutionSchema = createInsertSchema(institutions).omit({ id: true, createdAt: true });
-export const selectInstitutionSchema = createSelectSchema(institutions);
-export const insertApplicationSchema = createInsertSchema(applications).omit({ id: true, createdAt: true, updatedAt: true, applicationNumber: true });
-export const selectApplicationSchema = createSelectSchema(applications);
-export const insertDocumentSchema = createInsertSchema(documents).omit({ id: true, uploadedAt: true });
-export const selectDocumentSchema = createSelectSchema(documents);
-export const insertEvaluatorAssignmentSchema = createInsertSchema(evaluatorAssignments).omit({ id: true, assignedAt: true });
-export const selectEvaluatorAssignmentSchema = createSelectSchema(evaluatorAssignments);
-export const insertEvaluationSchema = createInsertSchema(evaluations).omit({ id: true, createdAt: true, updatedAt: true });
-export const selectEvaluationSchema = createSelectSchema(evaluations);
-export const insertMessageSchema = createInsertSchema(messages).omit({ id: true, createdAt: true });
-export const selectMessageSchema = createSelectSchema(messages);
-export const insertTimelineStageSchema = createInsertSchema(timelineStages).omit({ id: true, createdAt: true });
-export const selectTimelineStageSchema = createSelectSchema(timelineStages);
-export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, sentAt: true });
-export const selectNotificationSchema = createSelectSchema(notifications);
-export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
-export const selectAuditLogSchema = createSelectSchema(auditLogs);
-export const insertAnalyticsMetricSchema = createInsertSchema(analyticsMetrics).omit({ id: true, recordDate: true });
-export const selectAnalyticsMetricSchema = createSelectSchema(analyticsMetrics);
-export const insertInfrastructureImageSchema = createInsertSchema(infrastructureImages).omit({ id: true, uploadDate: true });
-export const selectInfrastructureImageSchema = createSelectSchema(infrastructureImages);
-export const insertCvAnalysisSchema = createInsertSchema(cvAnalysis).omit({ id: true, analyzedAt: true });
-export const selectCvAnalysisSchema = createSelectSchema(cvAnalysis);
-export const insertVerificationResultSchema = createInsertSchema(verificationResults).omit({ id: true, verifiedAt: true });
-export const selectVerificationResultSchema = createSelectSchema(verificationResults);
-export const insertEvaluatorSchema = createInsertSchema(evaluators).omit({ id: true, createdAt: true });
-export const selectEvaluatorSchema = createSelectSchema(evaluators);
+export const selectTimelineStageSchema = z.object({
+  _id: z.string(),
+  applicationId: z.string(),
+  title: z.string(),
+  description: z.string().optional(),
+  status: z.enum(stageStatusValues),
+  assignedTo: z.string().optional(),
+  stageStartDate: z.date().optional(),
+  timeline: z.any().optional(),
+  daysElapsed: z.number().int().optional(),
+  completedAt: z.date().optional(),
+  createdAt: z.date(),
+});
 
-export type User = typeof users.$inferSelect;
+export const insertNotificationSchema = z.object({
+  userId: z.string(),
+  type: z.enum(notificationTypeValues).default("info"),
+  message: z.string(),
+  isRead: z.boolean().default(false),
+});
+
+export const selectNotificationSchema = z.object({
+  _id: z.string(),
+  userId: z.string(),
+  type: z.enum(notificationTypeValues),
+  message: z.string(),
+  isRead: z.boolean(),
+  sentAt: z.date(),
+});
+
+export const insertAuditLogSchema = z.object({
+  userId: z.string().optional(),
+  action: z.string(),
+  entityType: z.string(),
+  entityId: z.string().optional(),
+  changes: z.any().optional(),
+});
+
+export const selectAuditLogSchema = z.object({
+  _id: z.string(),
+  userId: z.string().optional(),
+  action: z.string(),
+  entityType: z.string(),
+  entityId: z.string().optional(),
+  changes: z.any().optional(),
+  timestamp: z.date(),
+});
+
+export const insertAnalyticsMetricSchema = z.object({
+  metricType: z.string(),
+  data: z.any().optional(),
+  value: z.number().optional(),
+});
+
+export const selectAnalyticsMetricSchema = z.object({
+  _id: z.string(),
+  metricType: z.string(),
+  recordDate: z.date(),
+  data: z.any().optional(),
+  value: z.number().optional(),
+});
+
+export const insertInfrastructureImageSchema = z.object({
+  applicationId: z.string(),
+  imageUrl: z.string(),
+  facilityType: z.enum(facilityTypeValues),
+  geoCoordinates: z.any().optional(),
+});
+
+export const selectInfrastructureImageSchema = z.object({
+  _id: z.string(),
+  applicationId: z.string(),
+  imageUrl: z.string(),
+  facilityType: z.enum(facilityTypeValues),
+  geoCoordinates: z.any().optional(),
+  uploadDate: z.date(),
+});
+
+export const insertCvAnalysisSchema = z.object({
+  imageId: z.string(),
+  dimensions: z.any().optional(),
+  detectedFeatures: z.any().optional(),
+  meetsStandards: z.boolean().optional(),
+  accuracyScore: z.number().optional(),
+  remarks: z.string().optional(),
+});
+
+export const selectCvAnalysisSchema = z.object({
+  _id: z.string(),
+  imageId: z.string(),
+  dimensions: z.any().optional(),
+  detectedFeatures: z.any().optional(),
+  meetsStandards: z.boolean().optional(),
+  accuracyScore: z.number().optional(),
+  remarks: z.string().optional(),
+  analyzedAt: z.date(),
+});
+
+export const insertVerificationResultSchema = z.object({
+  documentId: z.string(),
+  verificationType: z.string(),
+  confidenceScore: z.number().optional(),
+  extractedData: z.any().optional(),
+  isCompliant: z.boolean().optional(),
+  remarks: z.string().optional(),
+});
+
+export const selectVerificationResultSchema = z.object({
+  _id: z.string(),
+  documentId: z.string(),
+  verificationType: z.string(),
+  confidenceScore: z.number().optional(),
+  extractedData: z.any().optional(),
+  isCompliant: z.boolean().optional(),
+  remarks: z.string().optional(),
+  verifiedAt: z.date(),
+});
+
+export const insertEvaluatorSchema = z.object({
+  userId: z.string(),
+  expertise: z.string().optional(),
+  department: z.string().optional(),
+  currentWorkload: z.number().int().default(0),
+  avgReviewTime: z.number().optional(),
+  available: z.boolean().default(true),
+});
+
+export const selectEvaluatorSchema = z.object({
+  _id: z.string(),
+  userId: z.string(),
+  expertise: z.string().optional(),
+  department: z.string().optional(),
+  currentWorkload: z.number().int(),
+  avgReviewTime: z.number().optional(),
+  available: z.boolean(),
+  createdAt: z.date(),
+});
+
 export type InsertUser = z.infer<typeof insertUserSchema>;
-export type Institution = typeof institutions.$inferSelect;
 export type InsertInstitution = z.infer<typeof insertInstitutionSchema>;
-export type Application = typeof applications.$inferSelect;
 export type InsertApplication = z.infer<typeof insertApplicationSchema>;
-export type Document = typeof documents.$inferSelect;
 export type InsertDocument = z.infer<typeof insertDocumentSchema>;
-export type EvaluatorAssignment = typeof evaluatorAssignments.$inferSelect;
 export type InsertEvaluatorAssignment = z.infer<typeof insertEvaluatorAssignmentSchema>;
-export type Evaluation = typeof evaluations.$inferSelect;
 export type InsertEvaluation = z.infer<typeof insertEvaluationSchema>;
-export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
-export type TimelineStage = typeof timelineStages.$inferSelect;
 export type InsertTimelineStage = z.infer<typeof insertTimelineStageSchema>;
-export type Notification = typeof notifications.$inferSelect;
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
-export type AuditLog = typeof auditLogs.$inferSelect;
 export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
-export type AnalyticsMetric = typeof analyticsMetrics.$inferSelect;
 export type InsertAnalyticsMetric = z.infer<typeof insertAnalyticsMetricSchema>;
-export type InfrastructureImage = typeof infrastructureImages.$inferSelect;
 export type InsertInfrastructureImage = z.infer<typeof insertInfrastructureImageSchema>;
-export type CvAnalysis = typeof cvAnalysis.$inferSelect;
 export type InsertCvAnalysis = z.infer<typeof insertCvAnalysisSchema>;
-export type VerificationResult = typeof verificationResults.$inferSelect;
 export type InsertVerificationResult = z.infer<typeof insertVerificationResultSchema>;
-export type Evaluator = typeof evaluators.$inferSelect;
 export type InsertEvaluator = z.infer<typeof insertEvaluatorSchema>;
 
 export const loginSchema = z.object({
@@ -298,7 +565,7 @@ export const updateUserSchema = z.object({
 });
 
 export const createApplicationSchema = z.object({
-  applicationType: z.enum(["new-institution", "intake-increase", "new-course", "eoa", "location-change"]),
+  applicationType: z.enum(applicationTypeValues),
   institutionName: z.string().optional(),
   address: z.string().optional(),
   state: z.string().optional(),
@@ -308,15 +575,15 @@ export const createApplicationSchema = z.object({
 });
 
 export const assignEvaluatorSchema = z.object({
-  applicationId: z.string().uuid(),
-  evaluatorId: z.string().uuid(),
-  priority: z.enum(["low", "medium", "high"]).optional(),
+  applicationId: z.string(),
+  evaluatorId: z.string(),
+  priority: z.enum(priorityValues).optional(),
   deadline: z.string().datetime().optional(),
 });
 
 export const submitEvaluationSchema = z.object({
-  assignmentId: z.string().uuid(),
-  applicationId: z.string().uuid(),
+  assignmentId: z.string(),
+  applicationId: z.string(),
   score: z.number().int().min(0).max(100).optional(),
   comments: z.string().optional(),
   recommendation: z.string().optional(),
@@ -324,7 +591,7 @@ export const submitEvaluationSchema = z.object({
 });
 
 export const sendMessageSchema = z.object({
-  applicationId: z.string().uuid(),
+  applicationId: z.string(),
   content: z.string().min(1, "Message content is required"),
 });
 
@@ -338,7 +605,7 @@ export const updateApplicationSchema = z.object({
 });
 
 export const updateApplicationStatusSchema = z.object({
-  status: z.enum(["draft", "submitted", "scrutiny", "document_verification", "under_evaluation", "site_visit_scheduled", "site_visit_completed", "final_review", "approved", "rejected", "conditional_approval"]),
+  status: z.enum(applicationStatusValues),
 });
 
 export type LoginInput = z.infer<typeof loginSchema>;

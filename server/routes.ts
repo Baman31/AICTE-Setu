@@ -1,16 +1,17 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
-import { db } from "./db";
+import { getDB } from "./db";
 import { 
-  users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages,
-  notifications, auditLogs, analyticsMetrics, infrastructureImages, cvAnalysis, verificationResults, evaluators,
   loginSchema, registerSchema, createUserSchema, updateUserSchema, createApplicationSchema, assignEvaluatorSchema, submitEvaluationSchema, sendMessageSchema, updateApplicationSchema, updateApplicationStatusSchema
 } from "../shared/schema";
-import { eq, and, desc, count, sql } from "drizzle-orm";
 import session from "express-session";
 import MemoryStore from "memorystore";
 import bcrypt from "bcrypt";
 import { fromZodError } from "zod-validation-error";
+import crypto from "crypto";
+import type { Document, WithId } from "mongodb";
+
+type DocWithStringId = Document & { _id?: string };
 
 const SessionStore = MemoryStore(session);
 
@@ -23,6 +24,16 @@ declare module "express-session" {
 
 interface AuthRequest extends Request {
   session: session.Session & Partial<session.SessionData>;
+}
+
+function mapIdField(doc: any) {
+  if (!doc) return null;
+  const { _id, ...rest } = doc;
+  return { id: _id, ...rest };
+}
+
+function mapIdFields(docs: any[]) {
+  return docs.map(mapIdField);
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -64,6 +75,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = registerSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -71,9 +83,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { email, password, name, role, institutionDetails } = validationResult.data;
       
-      const existingUser = await db.query.users.findFirst({
-        where: eq(users.email, email),
-      });
+      const existingUser = await db.collection('users').findOne({ email });
 
       if (existingUser) {
         return res.status(400).json({ message: "Email already registered" });
@@ -81,20 +91,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const [user] = await db
-        .insert(users)
-        .values({ email, password: hashedPassword, name, role: "institution" })
-        .returning();
+      const userId = crypto.randomUUID();
+      const user = {
+        _id: userId,
+        email,
+        password: hashedPassword,
+        name,
+        role: "institution" as const,
+        createdAt: new Date(),
+      };
+
+      await db.collection('users').insertOne(user);
 
       if (institutionDetails) {
-        await db.insert(institutions).values({
-          userId: user.id,
+        const institution = {
+          _id: crypto.randomUUID(),
+          userId: userId,
           name: institutionDetails.name,
           address: institutionDetails.address,
           state: institutionDetails.state,
           contactEmail: email,
           contactPhone: institutionDetails.phone,
-        });
+          createdAt: new Date(),
+        };
+        await db.collection('institutions').insertOne(institution);
       }
 
       res.json({ message: "Registration successful" });
@@ -106,13 +126,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/users", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const allUsers = await db.query.users.findMany({
-        orderBy: [desc(users.createdAt)],
-      });
+      const db = getDB();
+      const allUsers = await db.collection('users')
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
 
       const usersWithoutPasswords = allUsers.map(user => {
-        const { password: _, ...userWithoutPassword } = user;
-        return userWithoutPassword;
+        const { password: _, _id, ...userWithoutPassword } = user;
+        return { id: _id, ...userWithoutPassword };
       });
 
       res.json(usersWithoutPasswords);
@@ -124,6 +146,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/admin/create-user", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = createUserSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -131,9 +154,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { email, password, name, role } = validationResult.data;
 
-      const existingUser = await db.query.users.findFirst({
-        where: eq(users.email, email),
-      });
+      const existingUser = await db.collection('users').findOne({ email });
 
       if (existingUser) {
         return res.status(400).json({ message: "Email already registered" });
@@ -141,13 +162,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const hashedPassword = await bcrypt.hash(password, 10);
 
-      const [user] = await db
-        .insert(users)
-        .values({ email, password: hashedPassword, name, role })
-        .returning();
+      const user = {
+        _id: crypto.randomUUID(),
+        email,
+        password: hashedPassword,
+        name,
+        role,
+        createdAt: new Date(),
+      };
 
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword });
+      await db.collection('users').insertOne(user);
+
+      const { password: _, _id, ...userWithoutPassword } = user;
+      res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Create user error:", error);
       res.status(500).json({ message: "Failed to create user" });
@@ -156,6 +183,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
       const validationResult = updateUserSchema.safeParse(req.body);
       if (!validationResult.success) {
@@ -169,11 +197,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       if (updateData.email) {
-        const existingUser = await db.query.users.findFirst({
-          where: and(
-            eq(users.email, updateData.email),
-            sql`${users.id} != ${id}`
-          ),
+        const existingUser = await db.collection('users').findOne({ 
+          email: updateData.email,
+          _id: { $ne: id }
         });
 
         if (existingUser) {
@@ -181,18 +207,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const [updatedUser] = await db
-        .update(users)
-        .set(updateData)
-        .where(eq(users.id, id))
-        .returning();
+      const result = await db.collection('users').findOneAndUpdate(
+        { _id: id },
+        { $set: updateData },
+        { returnDocument: 'after' }
+      );
 
-      if (!updatedUser) {
+      if (!result) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      const { password: _, ...userWithoutPassword } = updatedUser;
-      res.json({ user: userWithoutPassword });
+      const { password: _, _id, ...userWithoutPassword } = result;
+      res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Update user error:", error);
       res.status(500).json({ message: "Failed to update user" });
@@ -201,16 +227,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
       if (id === req.session.userId) {
         return res.status(400).json({ message: "Cannot delete your own account" });
       }
 
-      const [deletedUser] = await db
-        .delete(users)
-        .where(eq(users.id, id))
-        .returning();
+      const deletedUser = await db.collection('users').findOneAndDelete({ _id: id });
 
       if (!deletedUser) {
         return res.status(404).json({ message: "User not found" });
@@ -225,6 +249,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/login", async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = loginSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -232,9 +257,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { email, password } = validationResult.data;
 
-      const user = await db.query.users.findFirst({
-        where: eq(users.email, email),
-      });
+      const user = await db.collection('users').findOne({ email });
 
       if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
@@ -245,11 +268,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ message: "Invalid credentials" });
       }
 
-      req.session.userId = user.id;
+      req.session.userId = user._id;
       req.session.userRole = user.role;
 
-      const { password: _, ...userWithoutPassword } = user;
-      res.json({ user: userWithoutPassword });
+      const { password: _, _id, ...userWithoutPassword } = user;
+      res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Login failed" });
@@ -270,16 +293,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       return res.status(401).json({ message: "Not authenticated" });
     }
 
-    db.query.users
-      .findFirst({
-        where: eq(users.id, req.session.userId),
-      })
+    const db = getDB();
+    db.collection('users')
+      .findOne({ _id: req.session.userId })
       .then((user) => {
         if (!user) {
           return res.status(401).json({ message: "User not found" });
         }
-        const { password: _, ...userWithoutPassword } = user;
-        res.json({ user: userWithoutPassword });
+        const { password: _, _id, ...userWithoutPassword } = user;
+        res.json({ user: { id: _id, ...userWithoutPassword } });
       })
       .catch(() => {
         res.status(500).json({ message: "Session check failed" });
@@ -288,18 +310,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/institution/dashboard", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const db = getDB();
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
       if (!institution) {
         return res.status(404).json({ message: "Institution not found" });
       }
 
-      const allApplications = await db.query.applications.findMany({
-        where: eq(applications.institutionId, institution.id),
-        orderBy: [desc(applications.createdAt)],
-      });
+      const allApplications = await db.collection('applications')
+        .find({ institutionId: institution._id })
+        .sort({ createdAt: -1 })
+        .toArray();
 
       const stats = {
         total: allApplications.length,
@@ -327,20 +348,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/institution/applications", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const db = getDB();
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
       if (!institution) {
         return res.status(404).json({ message: "Institution not found" });
       }
 
-      const allApplications = await db.query.applications.findMany({
-        where: eq(applications.institutionId, institution.id),
-        orderBy: [desc(applications.createdAt)],
-      });
+      const allApplications = await db.collection('applications')
+        .find({ institutionId: institution._id })
+        .sort({ createdAt: -1 })
+        .toArray();
 
-      res.json(allApplications);
+      res.json(mapIdFields(allApplications));
     } catch (error) {
       console.error("Get applications error:", error);
       res.status(500).json({ message: "Failed to fetch applications" });
@@ -349,11 +369,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/messages/:applicationId", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { applicationId } = req.params;
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
@@ -363,19 +382,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.session.userId!;
 
       if (userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, userId),
-        });
+        const institution = await db.collection('institutions').findOne({ userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Access denied to this application's messages" });
         }
       } else if (userRole === "evaluator") {
-        const assignment = await db.query.evaluatorAssignments.findFirst({
-          where: and(
-            eq(evaluatorAssignments.applicationId, applicationId),
-            eq(evaluatorAssignments.evaluatorId, userId)
-          ),
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId,
+          evaluatorId: userId
         });
 
         if (!assignment) {
@@ -383,19 +398,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const allMessages = await db
-        .select({
-          id: messages.id,
-          applicationId: messages.applicationId,
-          senderId: messages.senderId,
-          senderName: users.name,
-          content: messages.content,
-          createdAt: messages.createdAt,
-        })
-        .from(messages)
-        .innerJoin(users, eq(messages.senderId, users.id))
-        .where(eq(messages.applicationId, applicationId))
-        .orderBy(messages.createdAt);
+      const allMessages = await db.collection('messages').aggregate([
+        { $match: { applicationId } },
+        {
+          $lookup: {
+            from: 'users',
+            localField: 'senderId',
+            foreignField: '_id',
+            as: 'sender'
+          }
+        },
+        { $unwind: '$sender' },
+        {
+          $project: {
+            id: '$_id',
+            applicationId: 1,
+            senderId: 1,
+            senderName: '$sender.name',
+            content: 1,
+            createdAt: 1
+          }
+        },
+        { $sort: { createdAt: 1 } }
+      ]).toArray();
 
       res.json(allMessages);
     } catch (error) {
@@ -406,6 +431,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/settings/profile", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { name, email } = req.body;
 
       if (!name && !email) {
@@ -415,11 +441,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const updateData: any = {};
       if (name) updateData.name = name;
       if (email) {
-        const existingUser = await db.query.users.findFirst({
-          where: and(
-            eq(users.email, email),
-            sql`${users.id} != ${req.session.userId}`
-          ),
+        const existingUser = await db.collection('users').findOne({
+          email,
+          _id: { $ne: req.session.userId }
         });
 
         if (existingUser) {
@@ -428,14 +452,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.email = email;
       }
 
-      const [updatedUser] = await db
-        .update(users)
-        .set(updateData)
-        .where(eq(users.id, req.session.userId!))
-        .returning();
+      const updatedUser = await db.collection('users').findOneAndUpdate(
+        { _id: req.session.userId },
+        { $set: updateData },
+        { returnDocument: 'after' }
+      );
 
-      const { password: _, ...userWithoutPassword } = updatedUser;
-      res.json({ user: userWithoutPassword });
+      const { password: _, _id, ...userWithoutPassword } = updatedUser!;
+      res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Update profile error:", error);
       res.status(500).json({ message: "Failed to update profile" });
@@ -444,15 +468,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.put("/api/settings/password", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { currentPassword, newPassword } = req.body;
 
       if (!currentPassword || !newPassword) {
         return res.status(400).json({ message: "Current and new passwords are required" });
       }
 
-      const user = await db.query.users.findFirst({
-        where: eq(users.id, req.session.userId!),
-      });
+      const user = await db.collection('users').findOne({ _id: req.session.userId });
 
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -465,10 +488,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const hashedPassword = await bcrypt.hash(newPassword, 10);
 
-      await db
-        .update(users)
-        .set({ password: hashedPassword })
-        .where(eq(users.id, req.session.userId!));
+      await db.collection('users').updateOne(
+        { _id: req.session.userId },
+        { $set: { password: hashedPassword } }
+      );
 
       res.json({ message: "Password updated successfully" });
     } catch (error) {
@@ -479,26 +502,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/evaluator/dashboard", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
     try {
-      const assignments = await db
-        .select({
-          id: evaluatorAssignments.id,
-          applicationId: evaluatorAssignments.applicationId,
-          priority: evaluatorAssignments.priority,
-          deadline: evaluatorAssignments.deadline,
-          applicationNumber: applications.applicationNumber,
-          institutionName: applications.institutionName,
-          applicationType: applications.applicationType,
-          state: applications.state,
-          address: applications.address,
-          courseName: applications.courseName,
-        })
-        .from(evaluatorAssignments)
-        .innerJoin(applications, eq(evaluatorAssignments.applicationId, applications.id))
-        .where(and(
-          eq(evaluatorAssignments.evaluatorId, req.session.userId!),
-          sql`${evaluatorAssignments.completedAt} IS NULL`
-        ))
-        .orderBy(desc(evaluatorAssignments.assignedAt));
+      const db = getDB();
+      const assignments = await db.collection('evaluatorAssignments').aggregate([
+        { 
+          $match: { 
+            evaluatorId: req.session.userId,
+            completedAt: null
+          } 
+        },
+        {
+          $lookup: {
+            from: 'applications',
+            localField: 'applicationId',
+            foreignField: '_id',
+            as: 'application'
+          }
+        },
+        { $unwind: '$application' },
+        {
+          $project: {
+            id: '$_id',
+            applicationId: 1,
+            priority: 1,
+            deadline: 1,
+            applicationNumber: '$application.applicationNumber',
+            institutionName: '$application.institutionName',
+            applicationType: '$application.applicationType',
+            state: '$application.state',
+            address: '$application.address',
+            courseName: '$application.courseName'
+          }
+        },
+        { $sort: { assignedAt: -1 } }
+      ]).toArray();
 
       const stats = {
         assigned: assignments.length,
@@ -525,27 +561,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/evaluator/applications", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
     try {
-      const assignedApps = await db
-        .select({
-          id: applications.id,
-          applicationNumber: applications.applicationNumber,
-          institutionId: applications.institutionId,
-          applicationType: applications.applicationType,
-          status: applications.status,
-          institutionName: applications.institutionName,
-          address: applications.address,
-          state: applications.state,
-          courseName: applications.courseName,
-          intake: applications.intake,
-          description: applications.description,
-          submittedAt: applications.submittedAt,
-          createdAt: applications.createdAt,
-          updatedAt: applications.updatedAt,
-        })
-        .from(evaluatorAssignments)
-        .innerJoin(applications, eq(evaluatorAssignments.applicationId, applications.id))
-        .where(eq(evaluatorAssignments.evaluatorId, req.session.userId!))
-        .orderBy(desc(applications.createdAt));
+      const db = getDB();
+      const assignedApps = await db.collection('evaluatorAssignments').aggregate([
+        { $match: { evaluatorId: req.session.userId } },
+        {
+          $lookup: {
+            from: 'applications',
+            localField: 'applicationId',
+            foreignField: '_id',
+            as: 'application'
+          }
+        },
+        { $unwind: '$application' },
+        {
+          $replaceRoot: { 
+            newRoot: {
+              $mergeObjects: [
+                '$application',
+                { id: '$application._id' }
+              ]
+            }
+          }
+        },
+        { $project: { _id: 0 } },
+        { $sort: { createdAt: -1 } }
+      ]).toArray();
 
       res.json(assignedApps);
     } catch (error) {
@@ -556,42 +596,88 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/dashboard", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
+      
       const [totalStats, activeEvaluators, monthlyChartData, workflowDistribution, avgProcessing] = await Promise.all([
-        db.select({
-          total: count(),
-          approved: count(sql`CASE WHEN ${applications.status} = 'approved' THEN 1 END`)
-        }).from(applications),
-        db.select({ count: count() }).from(users).where(eq(users.role, "evaluator")),
-        db.select({
-          month: sql<string>`DATE_TRUNC('month', ${applications.createdAt})`,
-          applications: count()
-        })
-          .from(applications)
-          .groupBy(sql`DATE_TRUNC('month', ${applications.createdAt})`)
-          .orderBy(desc(sql`DATE_TRUNC('month', ${applications.createdAt})`))
-          .limit(12),
-        db.select({
-          status: applications.status,
-          count: count()
-        }).from(applications).groupBy(applications.status),
-        db.select({
-          avgDays: sql<number>`COALESCE(AVG(EXTRACT(EPOCH FROM (${applications.updatedAt} - ${applications.submittedAt})) / 86400), 0)::int`
-        })
-          .from(applications)
-          .where(and(
-            eq(applications.status, "approved"),
-            sql`${applications.submittedAt} IS NOT NULL`,
-            sql`${applications.updatedAt} IS NOT NULL`
-          )),
+        db.collection('applications').aggregate([
+          {
+            $group: {
+              _id: null,
+              total: { $sum: 1 },
+              approved: {
+                $sum: { $cond: [{ $eq: ['$status', 'approved'] }, 1, 0] }
+              }
+            }
+          }
+        ]).toArray(),
+        db.collection('users').countDocuments({ role: "evaluator" }),
+        db.collection('applications').aggregate([
+          {
+            $group: {
+              _id: {
+                $dateToString: {
+                  format: '%Y-%m-01',
+                  date: '$createdAt'
+                }
+              },
+              applications: { $sum: 1 }
+            }
+          },
+          { $sort: { _id: -1 } },
+          { $limit: 12 },
+          {
+            $project: {
+              month: '$_id',
+              applications: 1
+            }
+          }
+        ]).toArray(),
+        db.collection('applications').aggregate([
+          {
+            $group: {
+              _id: '$status',
+              count: { $sum: 1 }
+            }
+          },
+          {
+            $project: {
+              status: '$_id',
+              count: 1,
+              _id: 0
+            }
+          }
+        ]).toArray(),
+        db.collection('applications').aggregate([
+          {
+            $match: {
+              status: 'approved',
+              submittedAt: { $ne: null },
+              updatedAt: { $ne: null }
+            }
+          },
+          {
+            $group: {
+              _id: null,
+              avgDays: {
+                $avg: {
+                  $divide: [
+                    { $subtract: ['$updatedAt', '$submittedAt'] },
+                    86400000
+                  ]
+                }
+              }
+            }
+          }
+        ]).toArray()
       ]);
 
-      const totalCount = Number(totalStats[0]?.total || 0);
-      const approvedCount = Number(totalStats[0]?.approved || 0);
-      const avgDays = Number(avgProcessing[0]?.avgDays || 0);
+      const totalCount = totalStats[0]?.total || 0;
+      const approvedCount = totalStats[0]?.approved || 0;
+      const avgDays = Math.round(avgProcessing[0]?.avgDays || 0);
 
       const stats = {
         totalApplications: totalCount,
-        activeEvaluators: Number(activeEvaluators[0]?.count || 0),
+        activeEvaluators: activeEvaluators,
         approvalRate: totalCount > 0 ? Math.round((approvedCount / totalCount) * 100) : 0,
         avgProcessingTime: `${avgDays} days`,
       };
@@ -604,13 +690,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           const year = date.getFullYear();
           return {
             name: `${monthName} ${year}`,
-            applications: Number(item.applications),
+            applications: item.applications,
           };
         });
 
       const workflow = workflowDistribution.map(w => ({
         stage: w.status,
-        count: Number(w.count),
+        count: w.count,
       }));
 
       res.json({ stats, chartData, workflowStages: workflow });
@@ -622,16 +708,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/alerts", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const alerts = [];
       
-      const unassignedApps = await db.select({ count: count() })
-        .from(applications)
-        .where(and(
-          eq(applications.status, "under_evaluation"),
-          sql`NOT EXISTS (SELECT 1 FROM ${evaluatorAssignments} WHERE ${evaluatorAssignments.applicationId} = ${applications.id})`
-        ));
+      const unassignedApps = await db.collection('applications').aggregate([
+        {
+          $match: { status: "under_evaluation" }
+        },
+        {
+          $lookup: {
+            from: 'evaluatorAssignments',
+            localField: '_id',
+            foreignField: 'applicationId',
+            as: 'assignments'
+          }
+        },
+        {
+          $match: { assignments: { $size: 0 } }
+        },
+        {
+          $count: 'count'
+        }
+      ]).toArray();
 
-      if (unassignedApps[0] && Number(unassignedApps[0].count) > 0) {
+      if (unassignedApps[0]?.count > 0) {
         alerts.push({
           type: "warning",
           message: `${unassignedApps[0].count} applications pending evaluator assignment`,
@@ -640,331 +740,305 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
-      const upcomingSiteVisits = await db.select({ count: count() })
-        .from(evaluatorAssignments)
-        .where(and(
-          sql`${evaluatorAssignments.completedAt} IS NULL`,
-          sql`${evaluatorAssignments.deadline} IS NOT NULL AND ${evaluatorAssignments.deadline} >= CURRENT_DATE AND ${evaluatorAssignments.deadline} <= CURRENT_DATE + INTERVAL '7 days'`
-        ));
+      const upcomingSiteVisits = await db.collection('evaluatorAssignments').countDocuments({
+        deadline: {
+          $gte: new Date(),
+          $lte: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+        },
+        completedAt: null
+      });
 
-      if (upcomingSiteVisits[0] && Number(upcomingSiteVisits[0].count) > 0) {
+      if (upcomingSiteVisits > 0) {
         alerts.push({
           type: "info",
-          message: `${upcomingSiteVisits[0].count} evaluations due in next week`,
+          message: `${upcomingSiteVisits} site visits scheduled in the next 7 days`,
           action: "View Schedule",
-          actionUrl: "/admin/evaluations"
-        });
-      }
-
-      const nearingDeadline = await db.select({ count: count() })
-        .from(evaluatorAssignments)
-        .where(and(
-          sql`${evaluatorAssignments.completedAt} IS NULL`,
-          sql`${evaluatorAssignments.deadline} IS NOT NULL AND ${evaluatorAssignments.deadline} <= CURRENT_DATE + INTERVAL '3 days'`
-        ));
-
-      if (nearingDeadline[0] && Number(nearingDeadline[0].count) > 0) {
-        alerts.push({
-          type: "warning",
-          message: `${nearingDeadline[0].count} evaluations nearing deadline`,
-          action: "Review",
           actionUrl: "/admin/applications"
         });
       }
 
-      const pendingReview = await db.select({ count: count() })
-        .from(applications)
-        .where(eq(applications.status, "submitted"));
+      const overdueReviews = await db.collection('evaluatorAssignments').countDocuments({
+        deadline: { $lt: new Date() },
+        completedAt: null
+      });
 
-      if (pendingReview[0] && Number(pendingReview[0].count) > 0) {
+      if (overdueReviews > 0) {
         alerts.push({
-          type: "info",
-          message: `${pendingReview[0].count} new applications awaiting initial review`,
-          action: "Review",
+          type: "error",
+          message: `${overdueReviews} overdue evaluations`,
+          action: "View Details",
           actionUrl: "/admin/applications"
         });
       }
 
       res.json({ alerts });
     } catch (error) {
-      console.error("Admin alerts error:", error);
+      console.error("Get alerts error:", error);
       res.status(500).json({ message: "Failed to fetch alerts" });
     }
   });
 
   app.post("/api/applications", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = createApplicationSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
       }
 
-      const { applicationType, institutionName, address, state, courseName, intake, description } = validationResult.data;
-
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
       if (!institution) {
         return res.status(404).json({ message: "Institution not found" });
       }
 
-      const appNumber = `APP-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 1000000)).padStart(6, "0")}`;
+      const { applicationType, institutionName, address, state, courseName, intake, description } = validationResult.data;
 
-      const [application] = await db
-        .insert(applications)
-        .values({
-          institutionId: institution.id,
-          applicationNumber: appNumber,
-          applicationType,
-          institutionName: institutionName || institution.name,
-          address: address || institution.address,
-          state: state || institution.state,
-          courseName,
-          intake,
-          description,
-          status: "draft",
-        })
-        .returning();
+      const applicationCount = await db.collection('applications').countDocuments();
+      const applicationNumber = `APP${String(applicationCount + 1).padStart(6, '0')}`;
 
-      const timelineStagesData = [
-        { title: "Application Submitted", description: "Application created", status: "current" as const },
-        { title: "Initial Scrutiny", description: "Awaiting scrutiny", status: "pending" as const },
-        { title: "Document Verification", description: "Awaiting verification", status: "pending" as const },
-        { title: "Evaluator Assignment", description: "Awaiting evaluator", status: "pending" as const },
-        { title: "Site Visit & Evaluation", description: "Pending site visit", status: "pending" as const },
-        { title: "Final Approval", description: "Pending final review", status: "pending" as const },
-      ];
+      const application = {
+        _id: crypto.randomUUID(),
+        applicationNumber,
+        institutionId: institution._id,
+        applicationType,
+        status: "draft" as const,
+        institutionName: institutionName || institution.name,
+        address: address || institution.address,
+        state: state || institution.state,
+        courseName,
+        intake,
+        description,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
 
-      await db.insert(timelineStages).values(
-        timelineStagesData.map(stage => ({
-          applicationId: application.id,
-          title: stage.title,
-          description: stage.description,
-          status: stage.status,
-        }))
-      );
+      await db.collection('applications').insertOne(application);
 
-      res.json({ application });
+      const { _id, ...rest } = application;
+      res.json({ application: { id: _id, ...rest } });
     } catch (error) {
       console.error("Create application error:", error);
       res.status(500).json({ message: "Failed to create application" });
     }
   });
 
-  app.get("/api/applications/tracker", requireAuth, async (req: AuthRequest, res: Response) => {
-    try {
-      let allApplications;
-      
-      if (req.session.userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, req.session.userId!),
-        });
-        
-        if (!institution) {
-          return res.status(404).json({ message: "Institution not found" });
-        }
-        
-        allApplications = await db.query.applications.findMany({
-          where: eq(applications.institutionId, institution.id),
-          orderBy: [desc(applications.createdAt)],
-        });
-      } else {
-        allApplications = await db.query.applications.findMany({
-          orderBy: [desc(applications.createdAt)],
-        });
-      }
-
-      const applicationsWithDetails = await Promise.all(
-        allApplications.map(async (app) => {
-          const appDocuments = await db.query.documents.findMany({
-            where: eq(documents.applicationId, app.id),
-          });
-
-          const approvedDocs = appDocuments.filter(doc => doc.status === "approved").length;
-          const rejectedDocs = appDocuments.filter(doc => doc.status === "rejected").length;
-          const pendingDocs = appDocuments.filter(doc => doc.status === "pending").length;
-          const totalDocs = appDocuments.length;
-          const evaluationProgress = totalDocs > 0 
-            ? Math.round(((approvedDocs + rejectedDocs) / totalDocs) * 100)
-            : 0;
-
-          return {
-            ...app,
-            documents: appDocuments,
-            approvedDocs,
-            rejectedDocs,
-            pendingDocs,
-            evaluationProgress,
-          };
-        })
-      );
-
-      res.json(applicationsWithDetails);
-    } catch (error) {
-      console.error("Get tracker error:", error);
-      res.status(500).json({ message: "Failed to fetch tracker data" });
-    }
-  });
-
   app.get("/api/applications/:id", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.applicationNumber, req.params.id),
-      });
+      const db = getDB();
+      const { id } = req.params;
+
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const [appDocuments, appMessages, appTimeline] = await Promise.all([
-        db.query.documents.findMany({
-          where: eq(documents.applicationId, application.id),
-        }),
-        db.select({
-          id: messages.id,
-          content: messages.content,
-          createdAt: messages.createdAt,
-          senderName: users.name,
-          senderRole: users.role,
-        })
-        .from(messages)
-        .innerJoin(users, eq(messages.senderId, users.id))
-        .where(eq(messages.applicationId, application.id))
-        .orderBy(messages.createdAt),
-        db.query.timelineStages.findMany({
-          where: eq(timelineStages.applicationId, application.id),
-          orderBy: [timelineStages.createdAt],
-        }),
-      ]);
+      if (req.session.userRole === "institution") {
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      res.json({
-        application,
-        documents: appDocuments,
-        messages: appMessages,
-        timeline: appTimeline,
-      });
+        if (!institution || institution._id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden: You can only view your own applications" });
+        }
+      } else if (req.session.userRole === "evaluator") {
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId: id,
+          evaluatorId: req.session.userId
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Forbidden: You can only view applications assigned to you" });
+        }
+      }
+
+      res.json(mapIdField(application));
     } catch (error) {
       console.error("Get application error:", error);
       res.status(500).json({ message: "Failed to fetch application" });
     }
   });
 
-  app.put("/api/applications/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+  app.patch("/api/applications/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.applicationNumber, req.params.id),
-      });
-
-      if (!application) {
-        return res.status(404).json({ message: "Application not found" });
-      }
-
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
-
-      if (req.session.userRole === "institution" && application.institutionId !== institution?.id) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
+      const db = getDB();
+      const { id } = req.params;
       const validationResult = updateApplicationSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
       }
 
-      const [updated] = await db
-        .update(applications)
-        .set({
-          ...validationResult.data,
-          updatedAt: new Date(),
-        })
-        .where(eq(applications.id, application.id))
-        .returning();
+      const updateData = validationResult.data;
 
-      res.json({ application: updated });
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
+
+      const application = await db.collection('applications').findOne({ _id: id });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
+
+      if (!institution || institution._id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only update your own applications" });
+      }
+
+      const updatedApp = await db.collection('applications').findOneAndUpdate(
+        { _id: id },
+        { $set: { ...updateData, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+
+      res.json({ application: mapIdField(updatedApp) });
     } catch (error) {
       console.error("Update application error:", error);
       res.status(500).json({ message: "Failed to update application" });
     }
   });
 
-  app.put("/api/admin/applications/:id/status", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+  app.delete("/api/applications/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
-      const validationResult = updateApplicationStatusSchema.safeParse(req.body);
-      if (!validationResult.success) {
-        return res.status(400).json({ message: fromZodError(validationResult.error).message });
-      }
+      const db = getDB();
+      const { id } = req.params;
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.applicationNumber, req.params.id),
-      });
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const [updated] = await db
-        .update(applications)
-        .set({
-          status: validationResult.data.status,
-          updatedAt: new Date(),
-        })
-        .where(eq(applications.id, application.id))
-        .returning();
+      if (application.status !== "draft") {
+        return res.status(400).json({ message: "Only draft applications can be deleted" });
+      }
 
-      res.json({ application: updated });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
+
+      if (!institution || institution._id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only delete your own applications" });
+      }
+
+      await db.collection('applications').deleteOne({ _id: id });
+
+      res.json({ message: "Application deleted successfully" });
     } catch (error) {
-      console.error("Update application status error:", error);
-      res.status(500).json({ message: "Failed to update application status" });
+      console.error("Delete application error:", error);
+      res.status(500).json({ message: "Failed to delete application" });
     }
   });
 
   app.post("/api/applications/:id/submit", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.applicationNumber, req.params.id),
-      });
+      const db = getDB();
+      const { id } = req.params;
+
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const [updated] = await db
-        .update(applications)
-        .set({
-          status: "submitted",
-          submittedAt: new Date(),
-          updatedAt: new Date(),
-        })
-        .where(eq(applications.id, application.id))
-        .returning();
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      await db
-        .update(timelineStages)
-        .set({ status: "completed", completedAt: new Date() })
-        .where(and(
-          eq(timelineStages.applicationId, application.id),
-          eq(timelineStages.title, "Application Submitted")
-        ));
+      if (!institution || institution._id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only submit your own applications" });
+      }
 
-      await db
-        .update(timelineStages)
-        .set({ status: "current" })
-        .where(and(
-          eq(timelineStages.applicationId, application.id),
-          eq(timelineStages.title, "Initial Scrutiny")
-        ));
+      if (application.status !== "draft") {
+        return res.status(400).json({ message: "Application has already been submitted" });
+      }
 
-      res.json({ application: updated });
+      const updatedApp = await db.collection('applications').findOneAndUpdate(
+        { _id: id },
+        { 
+          $set: { 
+            status: "submitted",
+            submittedAt: new Date(),
+            updatedAt: new Date()
+          } 
+        },
+        { returnDocument: 'after' }
+      );
+
+      res.json({ application: mapIdField(updatedApp) });
     } catch (error) {
       console.error("Submit application error:", error);
       res.status(500).json({ message: "Failed to submit application" });
     }
   });
 
+  app.patch("/api/applications/:id/status", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const db = getDB();
+      const { id } = req.params;
+      const validationResult = updateApplicationStatusSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const { status } = validationResult.data;
+
+      const updatedApp = await db.collection('applications').findOneAndUpdate(
+        { _id: id },
+        { $set: { status, updatedAt: new Date() } },
+        { returnDocument: 'after' }
+      );
+
+      if (!updatedApp) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      res.json({ application: mapIdField(updatedApp) });
+    } catch (error) {
+      console.error("Update application status error:", error);
+      res.status(500).json({ message: "Failed to update application status" });
+    }
+  });
+
+  app.get("/api/applications/:id/documents", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const db = getDB();
+      const { id } = req.params;
+
+      const application = await db.collection('applications').findOne({ _id: id });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      if (req.session.userRole === "institution") {
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
+
+        if (!institution || institution._id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      } else if (req.session.userRole === "evaluator") {
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId: id,
+          evaluatorId: req.session.userId
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
+      const docs = await db.collection('documents')
+        .find({ applicationId: id })
+        .sort({ uploadedAt: -1 })
+        .toArray();
+
+      res.json({ documents: mapIdFields(docs) });
+    } catch (error) {
+      console.error("Get documents error:", error);
+      res.status(500).json({ message: "Failed to fetch documents" });
+    }
+  });
+
   app.post("/api/applications/:id/documents", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
       const { category, fileName, fileSize, fileUrl } = req.body;
 
@@ -972,36 +1046,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "All document fields are required" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, id),
-      });
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      if (!institution || institution.id !== application.institutionId) {
+      if (!institution || institution._id !== application.institutionId) {
         return res.status(403).json({ message: "Forbidden: You can only upload documents to your own applications" });
       }
 
-      const [document] = await db
-        .insert(documents)
-        .values({
-          applicationId: id,
-          category,
-          fileName,
-          fileSize,
-          fileUrl,
-          status: "pending",
-          verified: false,
-        })
-        .returning();
+      const document = {
+        _id: crypto.randomUUID(),
+        applicationId: id,
+        category,
+        fileName,
+        fileSize,
+        fileUrl,
+        status: "pending",
+        verified: false,
+        uploadedAt: new Date(),
+      };
 
-      res.json({ document });
+      await db.collection('documents').insertOne(document);
+
+      res.json({ document: mapIdField(document) });
     } catch (error) {
       console.error("Upload document error:", error);
       res.status(500).json({ message: "Failed to upload document" });
@@ -1010,35 +1081,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/documents/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const document = await db.query.documents.findFirst({
-        where: eq(documents.id, id),
-      });
+      const document = await db.collection('documents').findOne({ _id: id });
 
       if (!document) {
         return res.status(404).json({ message: "Document not found" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, document.applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: document.applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      if (!institution || institution.id !== application.institutionId) {
+      if (!institution || institution._id !== application.institutionId) {
         return res.status(403).json({ message: "Forbidden: You can only delete documents from your own applications" });
       }
 
-      await db
-        .delete(documents)
-        .where(eq(documents.id, id));
+      await db.collection('documents').deleteOne({ _id: id });
 
       res.json({ message: "Document deleted successfully" });
     } catch (error) {
@@ -1049,6 +1113,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/messages", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = sendMessageSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -1056,9 +1121,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { applicationId, content } = validationResult.data;
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
@@ -1068,19 +1131,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.session.userId!;
 
       if (userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, userId),
-        });
+        const institution = await db.collection('institutions').findOne({ userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Access denied to send messages for this application" });
         }
       } else if (userRole === "evaluator") {
-        const assignment = await db.query.evaluatorAssignments.findFirst({
-          where: and(
-            eq(evaluatorAssignments.applicationId, applicationId),
-            eq(evaluatorAssignments.evaluatorId, userId)
-          ),
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId,
+          evaluatorId: userId
         });
 
         if (!assignment) {
@@ -1088,16 +1147,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const [message] = await db
-        .insert(messages)
-        .values({
-          applicationId,
-          senderId: userId,
-          content,
-        })
-        .returning();
+      const message = {
+        _id: crypto.randomUUID(),
+        applicationId,
+        senderId: userId,
+        content,
+        createdAt: new Date(),
+      };
 
-      res.json({ message });
+      await db.collection('messages').insertOne(message);
+
+      res.json({ message: mapIdField(message) });
     } catch (error) {
       console.error("Send message error:", error);
       res.status(500).json({ message: "Failed to send message" });
@@ -1106,6 +1166,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/applications/:applicationId/messages", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { applicationId } = req.params;
       const { content } = req.body;
 
@@ -1113,9 +1174,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Message content is required" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
@@ -1125,19 +1184,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.session.userId!;
 
       if (userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, userId),
-        });
+        const institution = await db.collection('institutions').findOne({ userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Access denied to send messages for this application" });
         }
       } else if (userRole === "evaluator") {
-        const assignment = await db.query.evaluatorAssignments.findFirst({
-          where: and(
-            eq(evaluatorAssignments.applicationId, applicationId),
-            eq(evaluatorAssignments.evaluatorId, userId)
-          ),
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId,
+          evaluatorId: userId
         });
 
         if (!assignment) {
@@ -1145,16 +1200,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      const [message] = await db
-        .insert(messages)
-        .values({
-          applicationId,
-          senderId: userId,
-          content: content.trim(),
-        })
-        .returning();
+      const message = {
+        _id: crypto.randomUUID(),
+        applicationId,
+        senderId: userId,
+        content: content.trim(),
+        createdAt: new Date(),
+      };
 
-      res.json({ message });
+      await db.collection('messages').insertOne(message);
+
+      res.json({ message: mapIdField(message) });
     } catch (error) {
       console.error("Send message error:", error);
       res.status(500).json({ message: "Failed to send message" });
@@ -1163,6 +1219,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/admin/assign-evaluator", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = assignEvaluatorSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -1170,22 +1227,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { applicationId, evaluatorId, priority, deadline } = validationResult.data;
 
-      const [assignment] = await db
-        .insert(evaluatorAssignments)
-        .values({
-          applicationId,
-          evaluatorId,
-          priority: priority || "medium",
-          deadline: deadline ? new Date(deadline) : null,
-        })
-        .returning();
+      const assignment = {
+        _id: crypto.randomUUID(),
+        applicationId,
+        evaluatorId,
+        priority: priority || "medium" as const,
+        deadline: deadline ? new Date(deadline) : undefined,
+        assignedAt: new Date(),
+      };
 
-      await db
-        .update(applications)
-        .set({ status: "under_evaluation", updatedAt: new Date() })
-        .where(eq(applications.id, applicationId));
+      await db.collection('evaluatorAssignments').insertOne(assignment);
 
-      res.json({ assignment });
+      await db.collection('applications').updateOne(
+        { _id: applicationId },
+        { $set: { status: "under_evaluation", updatedAt: new Date() } }
+      );
+
+      res.json({ assignment: mapIdField(assignment) });
     } catch (error) {
       console.error("Assign evaluator error:", error);
       res.status(500).json({ message: "Failed to assign evaluator" });
@@ -1194,11 +1252,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/applications", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
-      const allApplications = await db.query.applications.findMany({
-        orderBy: [desc(applications.createdAt)],
-      });
+      const db = getDB();
+      const allApplications = await db.collection('applications')
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
 
-      res.json({ applications: allApplications });
+      res.json({ applications: mapIdFields(allApplications) });
     } catch (error) {
       console.error("Get all applications error:", error);
       res.status(500).json({ message: "Failed to fetch applications" });
@@ -1207,6 +1267,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/evaluations", requireAuth, requireRole("evaluator"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const validationResult = submitEvaluationSchema.safeParse(req.body);
       if (!validationResult.success) {
         return res.status(400).json({ message: fromZodError(validationResult.error).message });
@@ -1214,25 +1275,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { assignmentId, applicationId, score, comments, recommendation, siteVisitNotes } = validationResult.data;
 
-      const [evaluation] = await db
-        .insert(evaluations)
-        .values({
-          assignmentId,
-          applicationId,
-          evaluatorId: req.session.userId!,
-          score,
-          comments,
-          recommendation,
-          siteVisitNotes,
-        })
-        .returning();
+      const evaluation = {
+        _id: crypto.randomUUID(),
+        assignmentId,
+        applicationId,
+        evaluatorId: req.session.userId!,
+        score,
+        comments,
+        recommendation,
+        siteVisitNotes,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
 
-      await db
-        .update(evaluatorAssignments)
-        .set({ completedAt: new Date() })
-        .where(eq(evaluatorAssignments.id, assignmentId));
+      await db.collection('evaluations').insertOne(evaluation);
 
-      res.json({ evaluation });
+      await db.collection('evaluatorAssignments').updateOne(
+        { _id: assignmentId },
+        { $set: { completedAt: new Date() } }
+      );
+
+      res.json({ evaluation: mapIdField(evaluation) });
     } catch (error) {
       console.error("Submit evaluation error:", error);
       res.status(500).json({ message: "Failed to submit evaluation" });
@@ -1241,12 +1304,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/notifications", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
-      const userNotifications = await db.query.notifications.findMany({
-        where: eq(notifications.userId, req.session.userId!),
-        orderBy: [desc(notifications.sentAt)],
-      });
+      const db = getDB();
+      const userNotifications = await db.collection('notifications')
+        .find({ userId: req.session.userId })
+        .sort({ sentAt: -1 })
+        .toArray();
 
-      res.json({ notifications: userNotifications });
+      res.json({ notifications: mapIdFields(userNotifications) });
     } catch (error) {
       console.error("Get notifications error:", error);
       res.status(500).json({ message: "Failed to fetch notifications" });
@@ -1255,22 +1319,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.patch("/api/notifications/:id/read", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const [notification] = await db
-        .update(notifications)
-        .set({ isRead: true })
-        .where(and(
-          eq(notifications.id, id),
-          eq(notifications.userId, req.session.userId!)
-        ))
-        .returning();
+      const notification = await db.collection('notifications').findOneAndUpdate(
+        { _id: id, userId: req.session.userId },
+        { $set: { isRead: true } },
+        { returnDocument: 'after' }
+      );
 
       if (!notification) {
         return res.status(404).json({ message: "Notification not found" });
       }
 
-      res.json({ notification });
+      res.json({ notification: mapIdField(notification) });
     } catch (error) {
       console.error("Mark notification as read error:", error);
       res.status(500).json({ message: "Failed to update notification" });
@@ -1279,32 +1341,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/applications/:id/infrastructure-images", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, id),
-      });
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
       if (req.session.userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, req.session.userId!),
-        });
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Forbidden" });
         }
       }
 
-      const images = await db.query.infrastructureImages.findMany({
-        where: eq(infrastructureImages.applicationId, id),
-        orderBy: [desc(infrastructureImages.uploadDate)],
-      });
+      const images = await db.collection('infrastructureImages')
+        .find({ applicationId: id })
+        .sort({ uploadDate: -1 })
+        .toArray();
 
-      res.json({ images });
+      res.json({ images: mapIdFields(images) });
     } catch (error) {
       console.error("Get infrastructure images error:", error);
       res.status(500).json({ message: "Failed to fetch infrastructure images" });
@@ -1313,6 +1372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/applications/:id/infrastructure-images", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
       const { imageUrl, facilityType, geoCoordinates } = req.body;
 
@@ -1320,33 +1380,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Image URL and facility type are required" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, id),
-      });
+      const application = await db.collection('applications').findOne({ _id: id });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      if (!institution || institution.id !== application.institutionId) {
+      if (!institution || institution._id !== application.institutionId) {
         return res.status(403).json({ message: "Forbidden: You can only upload images to your own applications" });
       }
 
-      const [image] = await db
-        .insert(infrastructureImages)
-        .values({
-          applicationId: id,
-          imageUrl,
-          facilityType,
-          geoCoordinates: geoCoordinates || null,
-        })
-        .returning();
+      const image = {
+        _id: crypto.randomUUID(),
+        applicationId: id,
+        imageUrl,
+        facilityType,
+        geoCoordinates: geoCoordinates || undefined,
+        uploadDate: new Date(),
+      };
 
-      res.json({ image });
+      await db.collection('infrastructureImages').insertOne(image);
+
+      res.json({ image: mapIdField(image) });
     } catch (error) {
       console.error("Upload infrastructure image error:", error);
       res.status(500).json({ message: "Failed to upload infrastructure image" });
@@ -1355,36 +1412,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.delete("/api/infrastructure-images/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const image = await db.query.infrastructureImages.findFirst({
-        where: eq(infrastructureImages.id, id),
-      });
+      const image = await db.collection('infrastructureImages').findOne({ _id: id });
 
       if (!image) {
         return res.status(404).json({ message: "Image not found" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, image.applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: image.applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
-      const institution = await db.query.institutions.findFirst({
-        where: eq(institutions.userId, req.session.userId!),
-      });
+      const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-      if (!institution || institution.id !== application.institutionId) {
+      if (!institution || institution._id !== application.institutionId) {
         return res.status(403).json({ message: "Forbidden: You can only delete images from your own applications" });
       }
 
-      const [deletedImage] = await db
-        .delete(infrastructureImages)
-        .where(eq(infrastructureImages.id, id))
-        .returning();
+      await db.collection('infrastructureImages').deleteOne({ _id: id });
 
       res.json({ message: "Image deleted successfully" });
     } catch (error) {
@@ -1395,43 +1444,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/infrastructure-images/:id/cv-analysis", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const image = await db.query.infrastructureImages.findFirst({
-        where: eq(infrastructureImages.id, id),
-      });
+      const image = await db.collection('infrastructureImages').findOne({ _id: id });
 
       if (!image) {
         return res.status(404).json({ message: "Image not found" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, image.applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: image.applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
       if (req.session.userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, req.session.userId!),
-        });
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Forbidden" });
         }
       }
 
-      const analysis = await db.query.cvAnalysis.findFirst({
-        where: eq(cvAnalysis.imageId, id),
-      });
+      const analysis = await db.collection('cvAnalysis').findOne({ imageId: id });
 
       if (!analysis) {
         return res.status(404).json({ message: "CV analysis not found" });
       }
 
-      res.json({ analysis });
+      res.json({ analysis: mapIdField(analysis) });
     } catch (error) {
       console.error("Get CV analysis error:", error);
       res.status(500).json({ message: "Failed to fetch CV analysis" });
@@ -1440,22 +1482,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/infrastructure-images/:id/cv-analysis", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
       const { dimensions, detectedFeatures, meetsStandards, accuracyScore, remarks } = req.body;
 
-      const [analysis] = await db
-        .insert(cvAnalysis)
-        .values({
-          imageId: id,
-          dimensions: dimensions || null,
-          detectedFeatures: detectedFeatures || null,
-          meetsStandards: meetsStandards || null,
-          accuracyScore: accuracyScore || null,
-          remarks: remarks || null,
-        })
-        .returning();
+      const analysis = {
+        _id: crypto.randomUUID(),
+        imageId: id,
+        dimensions: dimensions || undefined,
+        detectedFeatures: detectedFeatures || undefined,
+        meetsStandards: meetsStandards || undefined,
+        accuracyScore: accuracyScore || undefined,
+        remarks: remarks || undefined,
+        analyzedAt: new Date(),
+      };
 
-      res.json({ analysis });
+      await db.collection('cvAnalysis').insertOne(analysis);
+
+      res.json({ analysis: mapIdField(analysis) });
     } catch (error) {
       console.error("Create CV analysis error:", error);
       res.status(500).json({ message: "Failed to create CV analysis" });
@@ -1464,43 +1508,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/documents/:id/verification", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
 
-      const document = await db.query.documents.findFirst({
-        where: eq(documents.id, id),
-      });
+      const document = await db.collection('documents').findOne({ _id: id });
 
       if (!document) {
         return res.status(404).json({ message: "Document not found" });
       }
 
-      const application = await db.query.applications.findFirst({
-        where: eq(applications.id, document.applicationId),
-      });
+      const application = await db.collection('applications').findOne({ _id: document.applicationId });
 
       if (!application) {
         return res.status(404).json({ message: "Application not found" });
       }
 
       if (req.session.userRole === "institution") {
-        const institution = await db.query.institutions.findFirst({
-          where: eq(institutions.userId, req.session.userId!),
-        });
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
 
-        if (!institution || institution.id !== application.institutionId) {
+        if (!institution || institution._id !== application.institutionId) {
           return res.status(403).json({ message: "Forbidden" });
         }
       }
 
-      const verification = await db.query.verificationResults.findFirst({
-        where: eq(verificationResults.documentId, id),
-      });
+      const verification = await db.collection('verificationResults').findOne({ documentId: id });
 
       if (!verification) {
         return res.status(404).json({ message: "Verification result not found" });
       }
 
-      res.json({ verification });
+      res.json({ verification: mapIdField(verification) });
     } catch (error) {
       console.error("Get verification result error:", error);
       res.status(500).json({ message: "Failed to fetch verification result" });
@@ -1509,6 +1546,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/documents/:id/verification", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
       const { verificationType, confidenceScore, extractedData, isCompliant, remarks } = req.body;
 
@@ -1516,24 +1554,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Verification type is required" });
       }
 
-      const [verification] = await db
-        .insert(verificationResults)
-        .values({
-          documentId: id,
-          verificationType,
-          confidenceScore: confidenceScore || null,
-          extractedData: extractedData || null,
-          isCompliant: isCompliant || null,
-          remarks: remarks || null,
-        })
-        .returning();
+      const verification = {
+        _id: crypto.randomUUID(),
+        documentId: id,
+        verificationType,
+        confidenceScore: confidenceScore || undefined,
+        extractedData: extractedData || undefined,
+        isCompliant: isCompliant || undefined,
+        remarks: remarks || undefined,
+        verifiedAt: new Date(),
+      };
 
-      await db
-        .update(documents)
-        .set({ verified: isCompliant || false })
-        .where(eq(documents.id, id));
+      await db.collection('verificationResults').insertOne(verification);
 
-      res.json({ verification });
+      await db.collection('documents').updateOne(
+        { _id: id },
+        { $set: { verified: isCompliant || false } }
+      );
+
+      res.json({ verification: mapIdField(verification) });
     } catch (error) {
       console.error("Create verification result error:", error);
       res.status(500).json({ message: "Failed to create verification result" });
@@ -1542,21 +1581,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/analytics", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { metricType } = req.query;
 
       let metrics;
       if (metricType) {
-        metrics = await db.query.analyticsMetrics.findMany({
-          where: eq(analyticsMetrics.metricType, metricType as string),
-          orderBy: [desc(analyticsMetrics.recordDate)],
-        });
+        metrics = await db.collection('analyticsMetrics')
+          .find({ metricType: metricType as string })
+          .sort({ recordDate: -1 })
+          .toArray();
       } else {
-        metrics = await db.query.analyticsMetrics.findMany({
-          orderBy: [desc(analyticsMetrics.recordDate)],
-        });
+        metrics = await db.collection('analyticsMetrics')
+          .find({})
+          .sort({ recordDate: -1 })
+          .toArray();
       }
 
-      res.json({ metrics });
+      res.json({ metrics: mapIdFields(metrics) });
     } catch (error) {
       console.error("Get analytics error:", error);
       res.status(500).json({ message: "Failed to fetch analytics" });
@@ -1565,22 +1606,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/admin/analytics", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { metricType, data, value } = req.body;
 
       if (!metricType) {
         return res.status(400).json({ message: "Metric type is required" });
       }
 
-      const [metric] = await db
-        .insert(analyticsMetrics)
-        .values({
-          metricType,
-          data: data || null,
-          value: value || null,
-        })
-        .returning();
+      const metric = {
+        _id: crypto.randomUUID(),
+        metricType,
+        recordDate: new Date(),
+        data: data || undefined,
+        value: value || undefined,
+      };
 
-      res.json({ metric });
+      await db.collection('analyticsMetrics').insertOne(metric);
+
+      res.json({ metric: mapIdField(metric) });
     } catch (error) {
       console.error("Create analytics metric error:", error);
       res.status(500).json({ message: "Failed to create analytics metric" });
@@ -1589,27 +1632,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/admin/audit-logs", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { entityId, userId } = req.query;
 
       let logs;
       if (entityId) {
-        logs = await db.query.auditLogs.findMany({
-          where: eq(auditLogs.entityId, entityId as string),
-          orderBy: [desc(auditLogs.timestamp)],
-        });
+        logs = await db.collection('auditLogs')
+          .find({ entityId: entityId as string })
+          .sort({ timestamp: -1 })
+          .toArray();
       } else if (userId) {
-        logs = await db.query.auditLogs.findMany({
-          where: eq(auditLogs.userId, userId as string),
-          orderBy: [desc(auditLogs.timestamp)],
-        });
+        logs = await db.collection('auditLogs')
+          .find({ userId: userId as string })
+          .sort({ timestamp: -1 })
+          .toArray();
       } else {
-        logs = await db.query.auditLogs.findMany({
-          orderBy: [desc(auditLogs.timestamp)],
-          limit: 100,
-        });
+        logs = await db.collection('auditLogs')
+          .find({})
+          .sort({ timestamp: -1 })
+          .limit(100)
+          .toArray();
       }
 
-      res.json({ logs });
+      res.json({ logs: mapIdFields(logs) });
     } catch (error) {
       console.error("Get audit logs error:", error);
       res.status(500).json({ message: "Failed to fetch audit logs" });
@@ -1618,11 +1663,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/evaluators", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
-      const allEvaluators = await db.query.evaluators.findMany({
-        orderBy: [desc(evaluators.createdAt)],
-      });
+      const db = getDB();
+      const allEvaluators = await db.collection('evaluators')
+        .find({})
+        .sort({ createdAt: -1 })
+        .toArray();
 
-      res.json({ evaluators: allEvaluators });
+      res.json({ evaluators: mapIdFields(allEvaluators) });
     } catch (error) {
       console.error("Get evaluators error:", error);
       res.status(500).json({ message: "Failed to fetch evaluators" });
@@ -1631,12 +1678,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get("/api/evaluators/available", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
-      const availableEvaluators = await db.query.evaluators.findMany({
-        where: eq(evaluators.available, true),
-        orderBy: [evaluators.currentWorkload],
-      });
+      const db = getDB();
+      const availableEvaluators = await db.collection('evaluators')
+        .find({ available: true })
+        .sort({ currentWorkload: 1 })
+        .toArray();
 
-      res.json({ evaluators: availableEvaluators });
+      res.json({ evaluators: mapIdFields(availableEvaluators) });
     } catch (error) {
       console.error("Get available evaluators error:", error);
       res.status(500).json({ message: "Failed to fetch available evaluators" });
@@ -1645,84 +1693,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/evaluators", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { userId, expertise, department } = req.body;
 
       if (!userId) {
         return res.status(400).json({ message: "User ID is required" });
       }
 
-      const user = await db.query.users.findFirst({
-        where: eq(users.id, userId),
-      });
+      const user = await db.collection('users').findOne({ _id: userId });
 
-      if (!user || user.role !== "evaluator") {
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      if (user.role !== "evaluator") {
         return res.status(400).json({ message: "User must have evaluator role" });
       }
 
-      const existingEvaluator = await db.query.evaluators.findFirst({
-        where: eq(evaluators.userId, userId),
-      });
+      const existingEvaluator = await db.collection('evaluators').findOne({ userId });
 
       if (existingEvaluator) {
-        return res.status(400).json({ message: "Evaluator profile already exists" });
+        return res.status(400).json({ message: "Evaluator profile already exists for this user" });
       }
 
-      const [evaluator] = await db
-        .insert(evaluators)
-        .values({
-          userId,
-          expertise: expertise || null,
-          department: department || null,
-        })
-        .returning();
+      const evaluator = {
+        _id: crypto.randomUUID(),
+        userId,
+        expertise: expertise || undefined,
+        department: department || undefined,
+        currentWorkload: 0,
+        avgReviewTime: undefined,
+        available: true,
+        createdAt: new Date(),
+      };
 
-      res.json({ evaluator });
+      await db.collection('evaluators').insertOne(evaluator);
+
+      res.json({ evaluator: mapIdField(evaluator) });
     } catch (error) {
       console.error("Create evaluator error:", error);
       res.status(500).json({ message: "Failed to create evaluator" });
     }
   });
 
-  app.patch("/api/evaluators/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+  app.patch("/api/evaluators/:id", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
+      const db = getDB();
       const { id } = req.params;
-      const { expertise, department, available } = req.body;
+      const { expertise, department, available, currentWorkload } = req.body;
 
       const updateData: any = {};
       if (expertise !== undefined) updateData.expertise = expertise;
       if (department !== undefined) updateData.department = department;
       if (available !== undefined) updateData.available = available;
+      if (currentWorkload !== undefined) updateData.currentWorkload = currentWorkload;
 
       if (Object.keys(updateData).length === 0) {
         return res.status(400).json({ message: "No updates provided" });
       }
 
-      const evaluator = await db.query.evaluators.findFirst({
-        where: eq(evaluators.id, id),
-      });
+      const updatedEvaluator = await db.collection('evaluators').findOneAndUpdate(
+        { _id: id },
+        { $set: updateData },
+        { returnDocument: 'after' }
+      );
 
-      if (!evaluator) {
+      if (!updatedEvaluator) {
         return res.status(404).json({ message: "Evaluator not found" });
       }
 
-      if (req.session.userRole !== "admin" && evaluator.userId !== req.session.userId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
-      const [updated] = await db
-        .update(evaluators)
-        .set(updateData)
-        .where(eq(evaluators.id, id))
-        .returning();
-
-      res.json({ evaluator: updated });
+      res.json({ evaluator: mapIdField(updatedEvaluator) });
     } catch (error) {
       console.error("Update evaluator error:", error);
       res.status(500).json({ message: "Failed to update evaluator" });
     }
   });
 
-  const httpServer = createServer(app);
+  app.get("/api/applications/:id/timeline", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const db = getDB();
+      const { id } = req.params;
 
+      const application = await db.collection('applications').findOne({ _id: id });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      if (req.session.userRole === "institution") {
+        const institution = await db.collection('institutions').findOne({ userId: req.session.userId });
+
+        if (!institution || institution._id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      } else if (req.session.userRole === "evaluator") {
+        const assignment = await db.collection('evaluatorAssignments').findOne({
+          applicationId: id,
+          evaluatorId: req.session.userId
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
+      const stages = await db.collection('timelineStages')
+        .find({ applicationId: id })
+        .sort({ createdAt: 1 })
+        .toArray();
+
+      res.json({ stages: mapIdFields(stages) });
+    } catch (error) {
+      console.error("Get timeline error:", error);
+      res.status(500).json({ message: "Failed to fetch timeline" });
+    }
+  });
+
+  const httpServer = createServer(app);
   return httpServer;
 }
