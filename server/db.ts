@@ -1,12 +1,15 @@
 import { MongoClient, Db } from "mongodb";
 
 if (!process.env.MONGODB_URI) {
-  console.warn("WARNING: MONGODB_URI not set. Using in-memory fallback (data will not persist).");
+  throw new Error(
+    "MONGODB_URI must be set. Did you forget to provide the MongoDB connection string?",
+  );
 }
 
-const client = process.env.MONGODB_URI ? new MongoClient(process.env.MONGODB_URI) : null;
+const client = new MongoClient(process.env.MONGODB_URI);
 
 let db: Db;
+let isSeeded = false;
 
 export async function connectDB(): Promise<Db> {
   if (db) {
@@ -20,11 +23,121 @@ export async function connectDB(): Promise<Db> {
     
     await createIndexes(db);
     
+    await seedIfNeeded(db);
+    
     return db;
   } catch (error) {
     console.error("Failed to connect to MongoDB:", error);
     throw error;
   }
+}
+
+async function seedIfNeeded(database: Db) {
+  if (isSeeded) return;
+  
+  try {
+    const userCount = await database.collection('users').countDocuments();
+    
+    if (userCount === 0) {
+      console.log("📦 Database is empty, seeding with initial data...");
+      await seedDatabase(database);
+      isSeeded = true;
+    } else {
+      console.log("✅ Database already contains data, skipping seed.");
+      isSeeded = true;
+    }
+  } catch (error) {
+    console.error("Error checking/seeding database:", error);
+  }
+}
+
+async function seedDatabase(database: Db) {
+  const bcrypt = await import("bcrypt");
+  const crypto = await import("crypto");
+  
+  const hashedPassword = await bcrypt.hash("password123", 10);
+
+  const adminUserId = crypto.randomUUID();
+  const evaluatorUserId = crypto.randomUUID();
+  const institutionUserId = crypto.randomUUID();
+
+  await database.collection('users').insertMany([
+    {
+      _id: adminUserId,
+      email: "admin@aicte.gov.in",
+      password: hashedPassword,
+      fullname: "Admin User",
+      role: "admin",
+      createdAt: new Date(),
+      lastLogin: null,
+    },
+    {
+      _id: evaluatorUserId,
+      email: "evaluator@aicte.gov.in",
+      password: hashedPassword,
+      fullname: "Dr. Rajesh Kumar",
+      role: "evaluator",
+      createdAt: new Date(),
+      lastLogin: null,
+    },
+    {
+      _id: institutionUserId,
+      email: "iit@institution.edu",
+      password: hashedPassword,
+      fullname: "IIT Mumbai",
+      role: "institution",
+      createdAt: new Date(),
+      lastLogin: null,
+    },
+  ]);
+
+  const institutionId = crypto.randomUUID();
+  await database.collection('institutions').insertOne({
+    _id: institutionId,
+    userId: institutionUserId,
+    name: "Indian Institute of Technology, Mumbai",
+    address: "Powai, Mumbai",
+    state: "Maharashtra",
+    contactEmail: "iit@institution.edu",
+    contactPhone: "+91 22 2576 8000",
+    createdAt: new Date(),
+  });
+
+  const app1Id = crypto.randomUUID();
+  await database.collection('applications').insertMany([
+    {
+      _id: app1Id,
+      institutionId: institutionId,
+      applicationNumber: "APP-2025-001234",
+      applicationType: "new-institution",
+      status: "under_evaluation",
+      institutionName: "Indian Institute of Technology, Mumbai",
+      address: "Powai, Mumbai",
+      state: "Maharashtra",
+      courseName: "B.Tech in Computer Science",
+      intake: 120,
+      description: "New B.Tech program in Computer Science",
+      submittedAt: new Date("2025-01-15"),
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ]);
+
+  await database.collection('evaluators').insertOne({
+    _id: crypto.randomUUID(),
+    userId: evaluatorUserId,
+    expertise: "Computer Science & Engineering",
+    department: "Technical Education",
+    currentWorkload: 1,
+    available: true,
+  });
+
+  console.log("\n✅ Database seeded successfully!");
+  console.log("\n=== TEST CREDENTIALS ===");
+  console.log("👤 Admin: admin@aicte.gov.in / password123");
+  console.log("👨‍🏫 Evaluator: evaluator@aicte.gov.in / password123");
+  console.log("🏛️ Institution: iit@institution.edu / password123");
+  console.log("========================\n");
 }
 
 async function createIndexes(database: Db) {
