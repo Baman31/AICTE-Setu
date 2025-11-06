@@ -21,6 +21,8 @@ import {
   SidebarFooter,
 } from "@/components/ui/sidebar";
 import { useLocation } from "wouter";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface AppSidebarProps {
   userRole: "institution" | "evaluator" | "admin";
@@ -51,7 +53,21 @@ const menuItems = {
 
 export default function AppSidebar({ userRole }: AppSidebarProps) {
   const [location, setLocation] = useLocation();
+  const { toast } = useToast();
   const items = menuItems[userRole];
+
+  const handleLogout = async () => {
+    try {
+      await apiRequest("/api/auth/logout", "POST");
+      window.location.href = "/";
+    } catch (error: any) {
+      toast({
+        title: "Logout failed",
+        description: error.message || "Failed to logout",
+        variant: "destructive",
+      });
+    }
+  };
 
   return (
     <Sidebar data-testid="app-sidebar">
@@ -107,7 +123,7 @@ export default function AppSidebar({ userRole }: AppSidebarProps) {
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
-              onClick={() => console.log('Logout clicked')}
+              onClick={handleLogout}
               data-testid="button-logout"
             >
               <LogOut className="w-4 h-4" />
