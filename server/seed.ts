@@ -1,5 +1,8 @@
 import { db } from "./db";
-import { users, institutions, applications, evaluatorAssignments, timelineStages } from "../shared/schema";
+import { 
+  users, institutions, applications, evaluatorAssignments, timelineStages, 
+  messages, documents, evaluations, notifications, evaluators 
+} from "../shared/schema";
 import bcrypt from "bcrypt";
 
 async function seed() {
@@ -129,11 +132,116 @@ async function seed() {
     },
   ]);
 
-  console.log("Database seeded successfully!");
-  console.log("\nTest Accounts:");
-  console.log("Admin: admin@aicte.gov.in / password123");
-  console.log("Evaluator: evaluator@aicte.gov.in / password123");
-  console.log("Institution: iit@institution.edu / password123");
+  console.log("Creating evaluator profile...");
+  await db.insert(evaluators).values({
+    userId: evaluatorUser.id,
+    expertise: "Computer Science & Engineering",
+    department: "Technical Education",
+    currentWorkload: 1,
+    available: true,
+  });
+
+  console.log("Creating documents...");
+  await db.insert(documents).values([
+    {
+      applicationId: app1.id,
+      category: "Academic Records",
+      fileName: "affiliation_certificate.pdf",
+      fileSize: "2.3 MB",
+      fileUrl: "https://storage.example.com/docs/affiliation_certificate.pdf",
+      status: "approved",
+      verified: true,
+    },
+    {
+      applicationId: app1.id,
+      category: "Faculty Details",
+      fileName: "faculty_qualifications.pdf",
+      fileSize: "1.5 MB",
+      fileUrl: "https://storage.example.com/docs/faculty_qualifications.pdf",
+      status: "approved",
+      verified: true,
+    },
+    {
+      applicationId: app1.id,
+      category: "Infrastructure Documents",
+      fileName: "lab_facilities.pdf",
+      fileSize: "3.8 MB",
+      fileUrl: "https://storage.example.com/docs/lab_facilities.pdf",
+      status: "pending",
+      verified: false,
+    },
+  ]);
+
+  console.log("Creating messages for real-time communication...");
+  await db.insert(messages).values([
+    {
+      applicationId: app1.id,
+      senderId: institutionUser.id,
+      content: "We have submitted all required documents for the new Computer Science program. Please review at your earliest convenience.",
+    },
+    {
+      applicationId: app1.id,
+      senderId: adminUser.id,
+      content: "Thank you for your submission. Your application has been assigned to Dr. Rajesh Kumar for evaluation.",
+    },
+    {
+      applicationId: app1.id,
+      senderId: evaluatorUser.id,
+      content: "I have reviewed the initial documents. The infrastructure looks promising. I would like to schedule a site visit for next week. Could you please confirm your availability?",
+    },
+    {
+      applicationId: app1.id,
+      senderId: institutionUser.id,
+      content: "Thank you Dr. Kumar. We are available next week Tuesday through Thursday. Please let us know which day works best for you.",
+    },
+    {
+      applicationId: app1.id,
+      senderId: evaluatorUser.id,
+      content: "Perfect! I will schedule the site visit for Wednesday, February 14th at 10:00 AM. Please ensure all lab facilities are accessible for inspection.",
+    },
+  ]);
+
+  console.log("Creating notifications...");
+  await db.insert(notifications).values([
+    {
+      userId: institutionUser.id,
+      type: "assignment",
+      message: "Your application APP-2025-001234 has been assigned to Dr. Rajesh Kumar",
+      isRead: false,
+    },
+    {
+      userId: evaluatorUser.id,
+      type: "assignment",
+      message: "New application assigned: APP-2025-001234 - IIT Mumbai",
+      isRead: true,
+    },
+    {
+      userId: adminUser.id,
+      type: "info",
+      message: "Application APP-2025-001234 is progressing on schedule",
+      isRead: false,
+    },
+  ]);
+
+  console.log("\n✅ Database seeded successfully!");
+  console.log("\n=== TEST CREDENTIALS ===");
+  console.log("\n👤 Admin:");
+  console.log("   Email: admin@aicte.gov.in");
+  console.log("   Password: password123");
+  console.log("\n👨‍🏫 Evaluator:");
+  console.log("   Email: evaluator@aicte.gov.in");
+  console.log("   Password: password123");
+  console.log("\n🏛️ Institution:");
+  console.log("   Email: iit@institution.edu");
+  console.log("   Password: password123");
+  console.log("\n========================");
+  console.log("\n📝 Sample Data Created:");
+  console.log("   - 3 Applications");
+  console.log("   - 3 Documents");
+  console.log("   - 5 Messages (demonstrating Institution ↔ Evaluator ↔ Admin communication)");
+  console.log("   - 6 Timeline Stages");
+  console.log("   - 3 Notifications");
+  console.log("\n💬 Messages feature is ready for real-time communication between all user roles!\n");
 
   process.exit(0);
 }

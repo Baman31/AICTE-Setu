@@ -1104,6 +1104,63 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/applications/:applicationId/messages", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { applicationId } = req.params;
+      const { content } = req.body;
+
+      if (!content || typeof content !== 'string' || !content.trim()) {
+        return res.status(400).json({ message: "Message content is required" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const userRole = req.session.userRole;
+      const userId = req.session.userId!;
+
+      if (userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, userId),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Access denied to send messages for this application" });
+        }
+      } else if (userRole === "evaluator") {
+        const assignment = await db.query.evaluatorAssignments.findFirst({
+          where: and(
+            eq(evaluatorAssignments.applicationId, applicationId),
+            eq(evaluatorAssignments.evaluatorId, userId)
+          ),
+        });
+
+        if (!assignment) {
+          return res.status(403).json({ message: "Access denied to send messages for this application" });
+        }
+      }
+
+      const [message] = await db
+        .insert(messages)
+        .values({
+          applicationId,
+          senderId: userId,
+          content: content.trim(),
+        })
+        .returning();
+
+      res.json({ message });
+    } catch (error) {
+      console.error("Send message error:", error);
+      res.status(500).json({ message: "Failed to send message" });
+    }
+  });
+
   app.post("/api/admin/assign-evaluator", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
     try {
       const validationResult = assignEvaluatorSchema.safeParse(req.body);
