@@ -61,10 +61,10 @@ Preferred communication style: Simple, everyday language.
 - Environment-based session secret configuration
 
 **Database Layer:**
-- Drizzle ORM for type-safe database operations
-- PostgreSQL as the primary relational database
-- Neon serverless database with WebSocket support
-- Schema-driven development with Zod validation integration
+- MongoDB as the primary NoSQL database
+- MongoDB native driver for database operations
+- Schema validation using Zod
+- String-based UUIDs for document IDs
 
 **Data Models:**
 - Users: Email-based authentication with role assignment
@@ -118,17 +118,14 @@ Preferred communication style: Simple, everyday language.
 - React Hook Form: Form state and validation
 - @hookform/resolvers: Zod integration for schema validation
 
-**Database & ORM:**
-- @neondatabase/serverless: Neon PostgreSQL driver with WebSocket support
-- Drizzle ORM: Type-safe database queries
-- drizzle-kit: Schema migrations and management
-- drizzle-zod: Automatic Zod schema generation from database schema
+**Database:**
+- mongodb: MongoDB native driver for Node.js
+- Zod: Runtime type validation and schema definitions
 
 **Authentication:**
 - bcrypt: Password hashing
 - express-session: Session management
-- memorystore: In-memory session store (development) - should be replaced with connect-pg-simple for production
-- connect-pg-simple: PostgreSQL session store (available but not currently configured)
+- memorystore: In-memory session store (development)
 
 **Utilities:**
 - date-fns: Date formatting and manipulation
@@ -144,6 +141,7 @@ Preferred communication style: Simple, everyday language.
 
 **Infrastructure Considerations:**
 - Session store uses MemoryStore (not suitable for production at scale)
-- Database connection pooling via @neondatabase/serverless
-- Environment variable configuration for DATABASE_URL and SESSION_SECRET
-- WebSocket support required for Neon database connectivity
+- MongoDB connection via native driver
+- Environment variable configuration for MONGODB_URI and SESSION_SECRET
+- Database indexes created automatically on application startup
+- Collections: users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages, notifications, auditLogs, analyticsMetrics, infrastructureImages, cvAnalysis, verificationResults, evaluators
