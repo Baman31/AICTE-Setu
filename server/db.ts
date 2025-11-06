@@ -1,12 +1,10 @@
 import { MongoClient, Db } from "mongodb";
 
 if (!process.env.MONGODB_URI) {
-  throw new Error(
-    "MONGODB_URI must be set. Did you forget to provide the MongoDB connection string?",
-  );
+  console.warn("WARNING: MONGODB_URI not set. Using in-memory fallback (data will not persist).");
 }
 
-const client = new MongoClient(process.env.MONGODB_URI);
+const client = process.env.MONGODB_URI ? new MongoClient(process.env.MONGODB_URI) : null;
 
 let db: Db;
 
