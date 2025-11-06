@@ -200,7 +200,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingUser = await db.collection('users').findOne({ 
           email: updateData.email,
           _id: { $ne: id }
-        });
+        } as any);
 
         if (existingUser) {
           return res.status(400).json({ message: "Email already in use" });
@@ -208,16 +208,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const result = await db.collection('users').findOneAndUpdate(
-        { _id: id },
+        { _id: id } as any,
         { $set: updateData },
         { returnDocument: 'after' }
       );
 
-      if (!result) {
+      if (!result || !result.value) {
         return res.status(404).json({ message: "User not found" });
       }
 
-      const { password: _, _id, ...userWithoutPassword } = result;
+      const updatedUser = result.value;
+      const { password: _, _id, ...userWithoutPassword } = updatedUser as any;
       res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Update user error:", error);
@@ -234,9 +235,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Cannot delete your own account" });
       }
 
-      const deletedUser = await db.collection('users').findOneAndDelete({ _id: id });
+      const result = await db.collection('users').findOneAndDelete({ _id: id } as any);
 
-      if (!deletedUser) {
+      if (!result || !result.value) {
         return res.status(404).json({ message: "User not found" });
       }
 
@@ -452,13 +453,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         updateData.email = email;
       }
 
-      const updatedUser = await db.collection('users').findOneAndUpdate(
-        { _id: req.session.userId },
-        { $set: updateData },
+      const result = await db.collection('users').findOneAndUpdate(
+        { _id: req.session.userId } as any,
+        { $set: updateData } as any,
         { returnDocument: 'after' }
       );
 
-      const { password: _, _id, ...userWithoutPassword } = updatedUser!;
+      if (!result || !result.value) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const updatedUser = result.value;
+      const { password: _, _id, ...userWithoutPassword } = updatedUser as any;
       res.json({ user: { id: _id, ...userWithoutPassword } });
     } catch (error) {
       console.error("Update profile error:", error);
@@ -885,12 +891,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ message: "Forbidden: You can only update your own applications" });
       }
 
-      const updatedApp = await db.collection('applications').findOneAndUpdate(
-        { _id: id },
-        { $set: { ...updateData, updatedAt: new Date() } },
+      const result = await db.collection('applications').findOneAndUpdate(
+        { _id: id } as any,
+        { $set: { ...updateData, updatedAt: new Date() } } as any,
         { returnDocument: 'after' }
       );
 
+      if (!result || !result.value) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const updatedApp = result.value;
       res.json({ application: mapIdField(updatedApp) });
     } catch (error) {
       console.error("Update application error:", error);
@@ -949,18 +960,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Application has already been submitted" });
       }
 
-      const updatedApp = await db.collection('applications').findOneAndUpdate(
-        { _id: id },
+      const result = await db.collection('applications').findOneAndUpdate(
+        { _id: id } as any,
         { 
           $set: { 
             status: "submitted",
             submittedAt: new Date(),
             updatedAt: new Date()
           } 
-        },
+        } as any,
         { returnDocument: 'after' }
       );
 
+      if (!result || !result.value) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const updatedApp = result.value;
       res.json({ application: mapIdField(updatedApp) });
     } catch (error) {
       console.error("Submit application error:", error);
@@ -979,16 +995,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const { status } = validationResult.data;
 
-      const updatedApp = await db.collection('applications').findOneAndUpdate(
-        { _id: id },
-        { $set: { status, updatedAt: new Date() } },
+      const result = await db.collection('applications').findOneAndUpdate(
+        { _id: id } as any,
+        { $set: { status, updatedAt: new Date() } } as any,
         { returnDocument: 'after' }
       );
 
-      if (!updatedApp) {
+      if (!result || !result.value) {
         return res.status(404).json({ message: "Application not found" });
       }
 
+      const updatedApp = result.value;
       res.json({ application: mapIdField(updatedApp) });
     } catch (error) {
       console.error("Update application status error:", error);
@@ -1322,17 +1339,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const db = getDB();
       const { id } = req.params;
 
-      const notification = await db.collection('notifications').findOneAndUpdate(
-        { _id: id, userId: req.session.userId },
-        { $set: { isRead: true } },
+      const result = await db.collection('notifications').findOneAndUpdate(
+        { _id: id, userId: req.session.userId } as any,
+        { $set: { isRead: true } } as any,
         { returnDocument: 'after' }
       );
 
-      if (!notification) {
+      if (!result || !result.value) {
         return res.status(404).json({ message: "Notification not found" });
       }
 
-      res.json({ notification: mapIdField(notification) });
+      const updatedNotification = result.value;
+      res.json({ notification: mapIdField(updatedNotification) });
     } catch (error) {
       console.error("Mark notification as read error:", error);
       res.status(500).json({ message: "Failed to update notification" });
@@ -1752,16 +1770,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "No updates provided" });
       }
 
-      const updatedEvaluator = await db.collection('evaluators').findOneAndUpdate(
-        { _id: id },
-        { $set: updateData },
+      const result = await db.collection('evaluators').findOneAndUpdate(
+        { _id: id } as any,
+        { $set: updateData } as any,
         { returnDocument: 'after' }
       );
 
-      if (!updatedEvaluator) {
+      if (!result || !result.value) {
         return res.status(404).json({ message: "Evaluator not found" });
       }
 
+      const updatedEvaluator = result.value;
       res.json({ evaluator: mapIdField(updatedEvaluator) });
     } catch (error) {
       console.error("Update evaluator error:", error);
