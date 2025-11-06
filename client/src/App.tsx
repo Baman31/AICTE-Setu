@@ -119,11 +119,13 @@ function Router() {
               <Route path="/evaluator/dashboard" component={EvaluatorDashboard} />
               <Route path="/evaluator/applications" component={EvaluatorDashboard} />
               <Route path="/evaluator/tracker" component={EvaluationTrackerPage} />
+              <Route path="/evaluator/messages" component={MessagesPage} />
               
               <Route path="/admin/dashboard" component={AdminDashboard} />
               <Route path="/admin/users" component={AdminUsersPage} />
               <Route path="/admin/applications" component={InstitutionDashboard} />
               <Route path="/admin/tracker" component={EvaluationTrackerPage} />
+              <Route path="/admin/messages" component={MessagesPage} />
               
               <Route component={NotFound} />
             </Switch>
