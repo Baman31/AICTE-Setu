@@ -161,4 +161,29 @@ export const api = {
     if (!response.ok) throw new Error("Failed to submit evaluation");
     return response.json();
   },
+
+  async uploadDocument(applicationId: string, data: {
+    category: string;
+    fileName: string;
+    fileSize: string;
+    fileUrl: string;
+  }) {
+    const response = await fetch(`${API_BASE}/applications/${applicationId}/documents`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+      credentials: "include",
+    });
+    if (!response.ok) throw new Error("Failed to upload document");
+    return response.json();
+  },
+
+  async deleteDocument(id: string) {
+    const response = await fetch(`${API_BASE}/documents/${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok) throw new Error("Failed to delete document");
+    return response.json();
+  },
 };

@@ -9,10 +9,12 @@ import AppSidebar from "@/components/AppSidebar";
 import ThemeToggle from "@/components/ThemeToggle";
 import LoginPage from "@/pages/LoginPage";
 import InstitutionDashboard from "@/pages/InstitutionDashboard";
+import ApplicationFormPage from "@/pages/ApplicationFormPage";
 import EvaluatorDashboard from "@/pages/EvaluatorDashboard";
 import EvaluatorApplicationsPage from "@/pages/EvaluatorApplicationsPage";
 import AdminDashboard from "@/pages/AdminDashboard";
 import AdminUsersPage from "@/pages/AdminUsersPage";
+import AdminApplicationsPage from "@/pages/AdminApplicationsPage";
 import ApplicationDetailPage from "@/pages/ApplicationDetailPage";
 import MessagesPage from "@/pages/MessagesPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -112,6 +114,7 @@ function Router() {
             <Switch>
               <Route path="/dashboard" component={InstitutionDashboard} />
               <Route path="/applications" component={InstitutionDashboard} />
+              <Route path="/new-application" component={ApplicationFormPage} />
               <Route path="/evaluation-tracker" component={EvaluationTrackerPage} />
               <Route path="/application/:id" component={ApplicationDetailPage} />
               <Route path="/messages" component={MessagesPage} />
@@ -125,7 +128,7 @@ function Router() {
               
               <Route path="/admin/dashboard" component={AdminDashboard} />
               <Route path="/admin/users" component={AdminUsersPage} />
-              <Route path="/admin/applications" component={InstitutionDashboard} />
+              <Route path="/admin/applications" component={AdminApplicationsPage} />
               <Route path="/admin/tracker" component={EvaluationTrackerPage} />
               <Route path="/admin/messages" component={MessagesPage} />
               <Route path="/admin/settings" component={SettingsPage} />

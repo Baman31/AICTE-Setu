@@ -963,6 +963,90 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/applications/:id/documents", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { category, fileName, fileSize, fileUrl } = req.body;
+
+      if (!category || !fileName || !fileSize || !fileUrl) {
+        return res.status(400).json({ message: "All document fields are required" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, id),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const institution = await db.query.institutions.findFirst({
+        where: eq(institutions.userId, req.session.userId!),
+      });
+
+      if (!institution || institution.id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only upload documents to your own applications" });
+      }
+
+      const [document] = await db
+        .insert(documents)
+        .values({
+          applicationId: id,
+          category,
+          fileName,
+          fileSize,
+          fileUrl,
+          status: "pending",
+          verified: false,
+        })
+        .returning();
+
+      res.json({ document });
+    } catch (error) {
+      console.error("Upload document error:", error);
+      res.status(500).json({ message: "Failed to upload document" });
+    }
+  });
+
+  app.delete("/api/documents/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const document = await db.query.documents.findFirst({
+        where: eq(documents.id, id),
+      });
+
+      if (!document) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, document.applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const institution = await db.query.institutions.findFirst({
+        where: eq(institutions.userId, req.session.userId!),
+      });
+
+      if (!institution || institution.id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only delete documents from your own applications" });
+      }
+
+      await db
+        .delete(documents)
+        .where(eq(documents.id, id));
+
+      res.json({ message: "Document deleted successfully" });
+    } catch (error) {
+      console.error("Delete document error:", error);
+      res.status(500).json({ message: "Failed to delete document" });
+    }
+  });
+
   app.post("/api/messages", requireAuth, async (req: AuthRequest, res: Response) => {
     try {
       const validationResult = sendMessageSchema.safeParse(req.body);
