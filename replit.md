@@ -65,6 +65,17 @@ Preferred communication style: Simple, everyday language.
 - MongoDB native driver for database operations
 - Schema validation using Zod
 - String-based UUIDs for document IDs
+- Auto-seeding in development mode (disabled in production for security)
+- Requires MONGODB_URI environment variable
+
+**Development Database Setup:**
+- The database automatically seeds with test data on first run in development mode
+- Auto-seeding is DISABLED in production (NODE_ENV=production) for security
+- Test credentials for development:
+  - Admin: admin@aicte.gov.in / password123
+  - Evaluator: evaluator@aicte.gov.in / password123
+  - Institution: iit@institution.edu / password123
+- Seed includes sample applications, documents, messages, and timeline stages
 
 **Data Models:**
 - Users: Email-based authentication with role assignment
