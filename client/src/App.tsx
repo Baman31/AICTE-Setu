@@ -11,6 +11,7 @@ import LoginPage from "@/pages/LoginPage";
 import InstitutionDashboard from "@/pages/InstitutionDashboard";
 import EvaluatorDashboard from "@/pages/EvaluatorDashboard";
 import AdminDashboard from "@/pages/AdminDashboard";
+import AdminUsersPage from "@/pages/AdminUsersPage";
 import ApplicationDetailPage from "@/pages/ApplicationDetailPage";
 import MessagesPage from "@/pages/MessagesPage";
 import SettingsPage from "@/pages/SettingsPage";
@@ -71,6 +72,7 @@ function Router() {
               <Route path="/evaluator/tracker" component={EvaluationTrackerPage} />
               
               <Route path="/admin/dashboard" component={AdminDashboard} />
+              <Route path="/admin/users" component={AdminUsersPage} />
               <Route path="/admin/applications" component={InstitutionDashboard} />
               <Route path="/admin/tracker" component={EvaluationTrackerPage} />
               

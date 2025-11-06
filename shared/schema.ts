@@ -176,6 +176,12 @@ export const createUserSchema = z.object({
   role: z.enum(["admin", "evaluator", "institution"]),
 });
 
+export const updateUserSchema = z.object({
+  email: z.string().email("Invalid email address").optional(),
+  name: z.string().min(1, "Name is required").optional(),
+  role: z.enum(["admin", "evaluator", "institution"]).optional(),
+});
+
 export const createApplicationSchema = z.object({
   applicationType: z.enum(["new-institution", "intake-increase", "new-course", "eoa", "location-change"]),
   institutionName: z.string().optional(),
@@ -223,6 +229,7 @@ export const updateApplicationStatusSchema = z.object({
 export type LoginInput = z.infer<typeof loginSchema>;
 export type RegisterInput = z.infer<typeof registerSchema>;
 export type CreateUserInput = z.infer<typeof createUserSchema>;
+export type UpdateUserInput = z.infer<typeof updateUserSchema>;
 export type CreateApplicationInput = z.infer<typeof createApplicationSchema>;
 export type AssignEvaluatorInput = z.infer<typeof assignEvaluatorSchema>;
 export type SubmitEvaluationInput = z.infer<typeof submitEvaluationSchema>;

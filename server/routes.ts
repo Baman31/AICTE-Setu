@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { db } from "./db";
 import { 
   users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages,
-  loginSchema, registerSchema, createUserSchema, createApplicationSchema, assignEvaluatorSchema, submitEvaluationSchema, sendMessageSchema, updateApplicationSchema, updateApplicationStatusSchema
+  loginSchema, registerSchema, createUserSchema, updateUserSchema, createApplicationSchema, assignEvaluatorSchema, submitEvaluationSchema, sendMessageSchema, updateApplicationSchema, updateApplicationStatusSchema
 } from "../shared/schema";
 import { eq, and, desc, count, sql } from "drizzle-orm";
 import session from "express-session";
@@ -103,6 +103,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.get("/api/admin/users", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const allUsers = await db.query.users.findMany({
+        orderBy: [desc(users.createdAt)],
+      });
+
+      const usersWithoutPasswords = allUsers.map(user => {
+        const { password: _, ...userWithoutPassword } = user;
+        return userWithoutPassword;
+      });
+
+      res.json(usersWithoutPasswords);
+    } catch (error) {
+      console.error("Get users error:", error);
+      res.status(500).json({ message: "Failed to fetch users" });
+    }
+  });
+
   app.post("/api/admin/create-user", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const validationResult = createUserSchema.safeParse(req.body);
@@ -132,6 +150,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Create user error:", error);
       res.status(500).json({ message: "Failed to create user" });
+    }
+  });
+
+  app.patch("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { id } = req.params;
+      const validationResult = updateUserSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ message: fromZodError(validationResult.error).message });
+      }
+
+      const updateData = validationResult.data;
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
+
+      if (updateData.email) {
+        const existingUser = await db.query.users.findFirst({
+          where: and(
+            eq(users.email, updateData.email),
+            sql`${users.id} != ${id}`
+          ),
+        });
+
+        if (existingUser) {
+          return res.status(400).json({ message: "Email already in use" });
+        }
+      }
+
+      const [updatedUser] = await db
+        .update(users)
+        .set(updateData)
+        .where(eq(users.id, id))
+        .returning();
+
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const { password: _, ...userWithoutPassword } = updatedUser;
+      res.json({ user: userWithoutPassword });
+    } catch (error) {
+      console.error("Update user error:", error);
+      res.status(500).json({ message: "Failed to update user" });
+    }
+  });
+
+  app.delete("/api/admin/users/:id", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      if (id === req.session.userId) {
+        return res.status(400).json({ message: "Cannot delete your own account" });
+      }
+
+      const [deletedUser] = await db
+        .delete(users)
+        .where(eq(users.id, id))
+        .returning();
+
+      if (!deletedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      res.json({ message: "User deleted successfully" });
+    } catch (error) {
+      console.error("Delete user error:", error);
+      res.status(500).json({ message: "Failed to delete user" });
     }
   });
 
