@@ -59,6 +59,7 @@ export default function AppSidebar({ userRole }: AppSidebarProps) {
   const handleLogout = async () => {
     try {
       await apiRequest("POST", "/api/auth/logout");
+      localStorage.removeItem("userRole");
       window.location.href = "/";
     } catch (error: any) {
       toast({

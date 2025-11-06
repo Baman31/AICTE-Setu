@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -19,18 +19,67 @@ import EvaluationTrackerPage from "@/pages/EvaluationTrackerPage";
 import NotFound from "@/pages/not-found";
 import { Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { api } from "@/lib/api";
 
 function Router() {
-  const [location] = useLocation();
-  const [userRole, setUserRole] = useState<"institution" | "evaluator" | "admin">("institution");
+  const [location, setLocation] = useLocation();
+  const [userRole, setUserRole] = useState<"institution" | "evaluator" | "admin" | null>(null);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const isLoginPage = location === "/" || location === "/login";
 
+  useEffect(() => {
+    const checkSession = async () => {
+      if (isLoginPage) {
+        setIsCheckingSession(false);
+        return;
+      }
+
+      try {
+        const storedRole = localStorage.getItem("userRole");
+        if (storedRole) {
+          setUserRole(storedRole as "institution" | "evaluator" | "admin");
+        }
+
+        const session = await api.getSession();
+        if (session.user && session.user.role) {
+          const actualRole = session.user.role as "institution" | "evaluator" | "admin";
+          setUserRole(actualRole);
+          localStorage.setItem("userRole", actualRole);
+        } else {
+          localStorage.removeItem("userRole");
+          setLocation("/login");
+        }
+      } catch (error) {
+        console.error("Session check failed:", error);
+        localStorage.removeItem("userRole");
+        setLocation("/login");
+      } finally {
+        setIsCheckingSession(false);
+      }
+    };
+
+    checkSession();
+  }, [isLoginPage, setLocation]);
+
   const handleLogin = (role: string) => {
-    setUserRole(role as "institution" | "evaluator" | "admin");
+    const validRole = role as "institution" | "evaluator" | "admin";
+    setUserRole(validRole);
+    localStorage.setItem("userRole", validRole);
   };
 
   if (isLoginPage) {
     return <LoginPage onLogin={handleLogin} />;
+  }
+
+  if (isCheckingSession || !userRole) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
   }
 
   const sidebarStyle = {
