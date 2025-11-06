@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { db } from "./db";
 import { 
   users, institutions, applications, documents, evaluatorAssignments, evaluations, messages, timelineStages,
+  notifications, auditLogs, analyticsMetrics, infrastructureImages, cvAnalysis, verificationResults, evaluators,
   loginSchema, registerSchema, createUserSchema, updateUserSchema, createApplicationSchema, assignEvaluatorSchema, submitEvaluationSchema, sendMessageSchema, updateApplicationSchema, updateApplicationStatusSchema
 } from "../shared/schema";
 import { eq, and, desc, count, sql } from "drizzle-orm";
@@ -1094,6 +1095,489 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Submit evaluation error:", error);
       res.status(500).json({ message: "Failed to submit evaluation" });
+    }
+  });
+
+  app.get("/api/notifications", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const userNotifications = await db.query.notifications.findMany({
+        where: eq(notifications.userId, req.session.userId!),
+        orderBy: [desc(notifications.sentAt)],
+      });
+
+      res.json({ notifications: userNotifications });
+    } catch (error) {
+      console.error("Get notifications error:", error);
+      res.status(500).json({ message: "Failed to fetch notifications" });
+    }
+  });
+
+  app.patch("/api/notifications/:id/read", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const [notification] = await db
+        .update(notifications)
+        .set({ isRead: true })
+        .where(and(
+          eq(notifications.id, id),
+          eq(notifications.userId, req.session.userId!)
+        ))
+        .returning();
+
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+
+      res.json({ notification });
+    } catch (error) {
+      console.error("Mark notification as read error:", error);
+      res.status(500).json({ message: "Failed to update notification" });
+    }
+  });
+
+  app.get("/api/applications/:id/infrastructure-images", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, id),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      if (req.session.userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, req.session.userId!),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
+      const images = await db.query.infrastructureImages.findMany({
+        where: eq(infrastructureImages.applicationId, id),
+        orderBy: [desc(infrastructureImages.uploadDate)],
+      });
+
+      res.json({ images });
+    } catch (error) {
+      console.error("Get infrastructure images error:", error);
+      res.status(500).json({ message: "Failed to fetch infrastructure images" });
+    }
+  });
+
+  app.post("/api/applications/:id/infrastructure-images", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { imageUrl, facilityType, geoCoordinates } = req.body;
+
+      if (!imageUrl || !facilityType) {
+        return res.status(400).json({ message: "Image URL and facility type are required" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, id),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const institution = await db.query.institutions.findFirst({
+        where: eq(institutions.userId, req.session.userId!),
+      });
+
+      if (!institution || institution.id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only upload images to your own applications" });
+      }
+
+      const [image] = await db
+        .insert(infrastructureImages)
+        .values({
+          applicationId: id,
+          imageUrl,
+          facilityType,
+          geoCoordinates: geoCoordinates || null,
+        })
+        .returning();
+
+      res.json({ image });
+    } catch (error) {
+      console.error("Upload infrastructure image error:", error);
+      res.status(500).json({ message: "Failed to upload infrastructure image" });
+    }
+  });
+
+  app.delete("/api/infrastructure-images/:id", requireAuth, requireRole("institution"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const image = await db.query.infrastructureImages.findFirst({
+        where: eq(infrastructureImages.id, id),
+      });
+
+      if (!image) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, image.applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      const institution = await db.query.institutions.findFirst({
+        where: eq(institutions.userId, req.session.userId!),
+      });
+
+      if (!institution || institution.id !== application.institutionId) {
+        return res.status(403).json({ message: "Forbidden: You can only delete images from your own applications" });
+      }
+
+      const [deletedImage] = await db
+        .delete(infrastructureImages)
+        .where(eq(infrastructureImages.id, id))
+        .returning();
+
+      res.json({ message: "Image deleted successfully" });
+    } catch (error) {
+      console.error("Delete infrastructure image error:", error);
+      res.status(500).json({ message: "Failed to delete image" });
+    }
+  });
+
+  app.get("/api/infrastructure-images/:id/cv-analysis", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const image = await db.query.infrastructureImages.findFirst({
+        where: eq(infrastructureImages.id, id),
+      });
+
+      if (!image) {
+        return res.status(404).json({ message: "Image not found" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, image.applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      if (req.session.userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, req.session.userId!),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
+      const analysis = await db.query.cvAnalysis.findFirst({
+        where: eq(cvAnalysis.imageId, id),
+      });
+
+      if (!analysis) {
+        return res.status(404).json({ message: "CV analysis not found" });
+      }
+
+      res.json({ analysis });
+    } catch (error) {
+      console.error("Get CV analysis error:", error);
+      res.status(500).json({ message: "Failed to fetch CV analysis" });
+    }
+  });
+
+  app.post("/api/infrastructure-images/:id/cv-analysis", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { dimensions, detectedFeatures, meetsStandards, accuracyScore, remarks } = req.body;
+
+      const [analysis] = await db
+        .insert(cvAnalysis)
+        .values({
+          imageId: id,
+          dimensions: dimensions || null,
+          detectedFeatures: detectedFeatures || null,
+          meetsStandards: meetsStandards || null,
+          accuracyScore: accuracyScore || null,
+          remarks: remarks || null,
+        })
+        .returning();
+
+      res.json({ analysis });
+    } catch (error) {
+      console.error("Create CV analysis error:", error);
+      res.status(500).json({ message: "Failed to create CV analysis" });
+    }
+  });
+
+  app.get("/api/documents/:id/verification", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+
+      const document = await db.query.documents.findFirst({
+        where: eq(documents.id, id),
+      });
+
+      if (!document) {
+        return res.status(404).json({ message: "Document not found" });
+      }
+
+      const application = await db.query.applications.findFirst({
+        where: eq(applications.id, document.applicationId),
+      });
+
+      if (!application) {
+        return res.status(404).json({ message: "Application not found" });
+      }
+
+      if (req.session.userRole === "institution") {
+        const institution = await db.query.institutions.findFirst({
+          where: eq(institutions.userId, req.session.userId!),
+        });
+
+        if (!institution || institution.id !== application.institutionId) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+      }
+
+      const verification = await db.query.verificationResults.findFirst({
+        where: eq(verificationResults.documentId, id),
+      });
+
+      if (!verification) {
+        return res.status(404).json({ message: "Verification result not found" });
+      }
+
+      res.json({ verification });
+    } catch (error) {
+      console.error("Get verification result error:", error);
+      res.status(500).json({ message: "Failed to fetch verification result" });
+    }
+  });
+
+  app.post("/api/documents/:id/verification", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { verificationType, confidenceScore, extractedData, isCompliant, remarks } = req.body;
+
+      if (!verificationType) {
+        return res.status(400).json({ message: "Verification type is required" });
+      }
+
+      const [verification] = await db
+        .insert(verificationResults)
+        .values({
+          documentId: id,
+          verificationType,
+          confidenceScore: confidenceScore || null,
+          extractedData: extractedData || null,
+          isCompliant: isCompliant || null,
+          remarks: remarks || null,
+        })
+        .returning();
+
+      await db
+        .update(documents)
+        .set({ verified: isCompliant || false })
+        .where(eq(documents.id, id));
+
+      res.json({ verification });
+    } catch (error) {
+      console.error("Create verification result error:", error);
+      res.status(500).json({ message: "Failed to create verification result" });
+    }
+  });
+
+  app.get("/api/admin/analytics", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { metricType } = req.query;
+
+      let metrics;
+      if (metricType) {
+        metrics = await db.query.analyticsMetrics.findMany({
+          where: eq(analyticsMetrics.metricType, metricType as string),
+          orderBy: [desc(analyticsMetrics.recordDate)],
+        });
+      } else {
+        metrics = await db.query.analyticsMetrics.findMany({
+          orderBy: [desc(analyticsMetrics.recordDate)],
+        });
+      }
+
+      res.json({ metrics });
+    } catch (error) {
+      console.error("Get analytics error:", error);
+      res.status(500).json({ message: "Failed to fetch analytics" });
+    }
+  });
+
+  app.post("/api/admin/analytics", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { metricType, data, value } = req.body;
+
+      if (!metricType) {
+        return res.status(400).json({ message: "Metric type is required" });
+      }
+
+      const [metric] = await db
+        .insert(analyticsMetrics)
+        .values({
+          metricType,
+          data: data || null,
+          value: value || null,
+        })
+        .returning();
+
+      res.json({ metric });
+    } catch (error) {
+      console.error("Create analytics metric error:", error);
+      res.status(500).json({ message: "Failed to create analytics metric" });
+    }
+  });
+
+  app.get("/api/admin/audit-logs", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { entityId, userId } = req.query;
+
+      let logs;
+      if (entityId) {
+        logs = await db.query.auditLogs.findMany({
+          where: eq(auditLogs.entityId, entityId as string),
+          orderBy: [desc(auditLogs.timestamp)],
+        });
+      } else if (userId) {
+        logs = await db.query.auditLogs.findMany({
+          where: eq(auditLogs.userId, userId as string),
+          orderBy: [desc(auditLogs.timestamp)],
+        });
+      } else {
+        logs = await db.query.auditLogs.findMany({
+          orderBy: [desc(auditLogs.timestamp)],
+          limit: 100,
+        });
+      }
+
+      res.json({ logs });
+    } catch (error) {
+      console.error("Get audit logs error:", error);
+      res.status(500).json({ message: "Failed to fetch audit logs" });
+    }
+  });
+
+  app.get("/api/evaluators", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const allEvaluators = await db.query.evaluators.findMany({
+        orderBy: [desc(evaluators.createdAt)],
+      });
+
+      res.json({ evaluators: allEvaluators });
+    } catch (error) {
+      console.error("Get evaluators error:", error);
+      res.status(500).json({ message: "Failed to fetch evaluators" });
+    }
+  });
+
+  app.get("/api/evaluators/available", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const availableEvaluators = await db.query.evaluators.findMany({
+        where: eq(evaluators.available, true),
+        orderBy: [evaluators.currentWorkload],
+      });
+
+      res.json({ evaluators: availableEvaluators });
+    } catch (error) {
+      console.error("Get available evaluators error:", error);
+      res.status(500).json({ message: "Failed to fetch available evaluators" });
+    }
+  });
+
+  app.post("/api/evaluators", requireAuth, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+    try {
+      const { userId, expertise, department } = req.body;
+
+      if (!userId) {
+        return res.status(400).json({ message: "User ID is required" });
+      }
+
+      const user = await db.query.users.findFirst({
+        where: eq(users.id, userId),
+      });
+
+      if (!user || user.role !== "evaluator") {
+        return res.status(400).json({ message: "User must have evaluator role" });
+      }
+
+      const existingEvaluator = await db.query.evaluators.findFirst({
+        where: eq(evaluators.userId, userId),
+      });
+
+      if (existingEvaluator) {
+        return res.status(400).json({ message: "Evaluator profile already exists" });
+      }
+
+      const [evaluator] = await db
+        .insert(evaluators)
+        .values({
+          userId,
+          expertise: expertise || null,
+          department: department || null,
+        })
+        .returning();
+
+      res.json({ evaluator });
+    } catch (error) {
+      console.error("Create evaluator error:", error);
+      res.status(500).json({ message: "Failed to create evaluator" });
+    }
+  });
+
+  app.patch("/api/evaluators/:id", requireAuth, async (req: AuthRequest, res: Response) => {
+    try {
+      const { id } = req.params;
+      const { expertise, department, available } = req.body;
+
+      const updateData: any = {};
+      if (expertise !== undefined) updateData.expertise = expertise;
+      if (department !== undefined) updateData.department = department;
+      if (available !== undefined) updateData.available = available;
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ message: "No updates provided" });
+      }
+
+      const evaluator = await db.query.evaluators.findFirst({
+        where: eq(evaluators.id, id),
+      });
+
+      if (!evaluator) {
+        return res.status(404).json({ message: "Evaluator not found" });
+      }
+
+      if (req.session.userRole !== "admin" && evaluator.userId !== req.session.userId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
+      const [updated] = await db
+        .update(evaluators)
+        .set(updateData)
+        .where(eq(evaluators.id, id))
+        .returning();
+
+      res.json({ evaluator: updated });
+    } catch (error) {
+      console.error("Update evaluator error:", error);
+      res.status(500).json({ message: "Failed to update evaluator" });
     }
   });
 

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, timestamp, integer, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, pgEnum, boolean, real, json } from "drizzle-orm/pg-core";
 import { createInsertSchema, createSelectSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -26,6 +26,9 @@ export const applicationTypeEnum = pgEnum("application_type", [
 ]);
 export const priorityEnum = pgEnum("priority", ["low", "medium", "high"]);
 export const stageStatusEnum = pgEnum("stage_status", ["pending", "current", "completed"]);
+export const assignmentStatusEnum = pgEnum("assignment_status", ["pending", "in_progress", "completed", "overdue"]);
+export const notificationTypeEnum = pgEnum("notification_type", ["info", "warning", "success", "error", "assignment", "status_update"]);
+export const facilityTypeEnum = pgEnum("facility_type", ["classroom", "laboratory", "library", "workshop", "sports", "hostel", "cafeteria", "auditorium", "other"]);
 
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -33,6 +36,9 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   role: userRoleEnum("role").notNull(),
   name: text("name").notNull(),
+  fullname: text("fullname"),
+  phone: text("phone"),
+  lastLogin: timestamp("last_login"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -42,8 +48,11 @@ export const institutions = pgTable("institutions", {
   name: text("name").notNull(),
   address: text("address").notNull(),
   state: text("state").notNull(),
+  affiliationType: text("affiliation_type"),
+  contactPerson: text("contact_person"),
   contactEmail: text("contact_email").notNull(),
   contactPhone: text("contact_phone"),
+  establishedDate: timestamp("established_date"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -52,6 +61,7 @@ export const applications = pgTable("applications", {
   applicationNumber: text("application_number").notNull().unique(),
   institutionId: varchar("institution_id").notNull().references(() => institutions.id),
   applicationType: applicationTypeEnum("application_type").notNull(),
+  programType: text("program_type"),
   status: applicationStatusEnum("status").notNull().default("draft"),
   institutionName: text("institution_name").notNull(),
   address: text("address").notNull(),
@@ -59,6 +69,8 @@ export const applications = pgTable("applications", {
   courseName: text("course_name"),
   intake: integer("intake"),
   description: text("description"),
+  formData: json("form_data"),
+  processingTime: real("processing_time"),
   submittedAt: timestamp("submitted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -72,6 +84,7 @@ export const documents = pgTable("documents", {
   fileSize: text("file_size").notNull(),
   fileUrl: text("file_url").notNull(),
   status: text("status").notNull().default("pending"),
+  verified: boolean("verified").default(false),
   uploadedAt: timestamp("uploaded_at").defaultNow().notNull(),
 });
 
@@ -80,6 +93,7 @@ export const evaluatorAssignments = pgTable("evaluator_assignments", {
   applicationId: varchar("application_id").notNull().references(() => applications.id),
   evaluatorId: varchar("evaluator_id").notNull().references(() => users.id),
   priority: priorityEnum("priority").notNull().default("medium"),
+  status: assignmentStatusEnum("status").default("pending"),
   deadline: timestamp("deadline"),
   assignedAt: timestamp("assigned_at").defaultNow().notNull(),
   completedAt: timestamp("completed_at"),
@@ -90,9 +104,10 @@ export const evaluations = pgTable("evaluations", {
   assignmentId: varchar("assignment_id").notNull().references(() => evaluatorAssignments.id),
   applicationId: varchar("application_id").notNull().references(() => applications.id),
   evaluatorId: varchar("evaluator_id").notNull().references(() => users.id),
-  score: integer("score"),
-  comments: text("comments"),
+  score: real("score"),
+  comments: json("comments"),
   recommendation: text("recommendation"),
+  approved: boolean("approved"),
   siteVisitNotes: text("site_visit_notes"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -113,7 +128,79 @@ export const timelineStages = pgTable("timeline_stages", {
   description: text("description"),
   status: stageStatusEnum("status").notNull().default("pending"),
   assignedTo: text("assigned_to"),
+  stageStartDate: timestamp("stage_start_date"),
+  timeline: json("timeline"),
+  daysElapsed: integer("days_elapsed"),
   completedAt: timestamp("completed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  type: notificationTypeEnum("type").notNull().default("info"),
+  message: text("message").notNull(),
+  isRead: boolean("is_read").default(false),
+  sentAt: timestamp("sent_at").defaultNow().notNull(),
+});
+
+export const auditLogs = pgTable("audit_logs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id),
+  action: text("action").notNull(),
+  entityType: text("entity_type").notNull(),
+  entityId: varchar("entity_id"),
+  changes: json("changes"),
+  timestamp: timestamp("timestamp").defaultNow().notNull(),
+});
+
+export const analyticsMetrics = pgTable("analytics_metrics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  metricType: text("metric_type").notNull(),
+  recordDate: timestamp("record_date").defaultNow().notNull(),
+  data: json("data"),
+  value: real("value"),
+});
+
+export const infrastructureImages = pgTable("infrastructure_images", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  applicationId: varchar("application_id").notNull().references(() => applications.id),
+  imageUrl: text("image_url").notNull(),
+  facilityType: facilityTypeEnum("facility_type").notNull(),
+  geoCoordinates: json("geo_coordinates"),
+  uploadDate: timestamp("upload_date").defaultNow().notNull(),
+});
+
+export const cvAnalysis = pgTable("cv_analysis", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  imageId: varchar("image_id").notNull().references(() => infrastructureImages.id),
+  dimensions: json("dimensions"),
+  detectedFeatures: json("detected_features"),
+  meetsStandards: boolean("meets_standards"),
+  accuracyScore: real("accuracy_score"),
+  remarks: text("remarks"),
+  analyzedAt: timestamp("analyzed_at").defaultNow().notNull(),
+});
+
+export const verificationResults = pgTable("verification_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  documentId: varchar("document_id").notNull().references(() => documents.id),
+  verificationType: text("verification_type").notNull(),
+  confidenceScore: real("confidence_score"),
+  extractedData: json("extracted_data"),
+  isCompliant: boolean("is_compliant"),
+  remarks: text("remarks"),
+  verifiedAt: timestamp("verified_at").defaultNow().notNull(),
+});
+
+export const evaluators = pgTable("evaluators", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  expertise: text("expertise"),
+  department: text("department"),
+  currentWorkload: integer("current_workload").default(0),
+  avgReviewTime: real("avg_review_time"),
+  available: boolean("available").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -133,6 +220,20 @@ export const insertMessageSchema = createInsertSchema(messages).omit({ id: true,
 export const selectMessageSchema = createSelectSchema(messages);
 export const insertTimelineStageSchema = createInsertSchema(timelineStages).omit({ id: true, createdAt: true });
 export const selectTimelineStageSchema = createSelectSchema(timelineStages);
+export const insertNotificationSchema = createInsertSchema(notifications).omit({ id: true, sentAt: true });
+export const selectNotificationSchema = createSelectSchema(notifications);
+export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, timestamp: true });
+export const selectAuditLogSchema = createSelectSchema(auditLogs);
+export const insertAnalyticsMetricSchema = createInsertSchema(analyticsMetrics).omit({ id: true, recordDate: true });
+export const selectAnalyticsMetricSchema = createSelectSchema(analyticsMetrics);
+export const insertInfrastructureImageSchema = createInsertSchema(infrastructureImages).omit({ id: true, uploadDate: true });
+export const selectInfrastructureImageSchema = createSelectSchema(infrastructureImages);
+export const insertCvAnalysisSchema = createInsertSchema(cvAnalysis).omit({ id: true, analyzedAt: true });
+export const selectCvAnalysisSchema = createSelectSchema(cvAnalysis);
+export const insertVerificationResultSchema = createInsertSchema(verificationResults).omit({ id: true, verifiedAt: true });
+export const selectVerificationResultSchema = createSelectSchema(verificationResults);
+export const insertEvaluatorSchema = createInsertSchema(evaluators).omit({ id: true, createdAt: true });
+export const selectEvaluatorSchema = createSelectSchema(evaluators);
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = z.infer<typeof insertUserSchema>;
@@ -150,6 +251,20 @@ export type Message = typeof messages.$inferSelect;
 export type InsertMessage = z.infer<typeof insertMessageSchema>;
 export type TimelineStage = typeof timelineStages.$inferSelect;
 export type InsertTimelineStage = z.infer<typeof insertTimelineStageSchema>;
+export type Notification = typeof notifications.$inferSelect;
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type AuditLog = typeof auditLogs.$inferSelect;
+export type InsertAuditLog = z.infer<typeof insertAuditLogSchema>;
+export type AnalyticsMetric = typeof analyticsMetrics.$inferSelect;
+export type InsertAnalyticsMetric = z.infer<typeof insertAnalyticsMetricSchema>;
+export type InfrastructureImage = typeof infrastructureImages.$inferSelect;
+export type InsertInfrastructureImage = z.infer<typeof insertInfrastructureImageSchema>;
+export type CvAnalysis = typeof cvAnalysis.$inferSelect;
+export type InsertCvAnalysis = z.infer<typeof insertCvAnalysisSchema>;
+export type VerificationResult = typeof verificationResults.$inferSelect;
+export type InsertVerificationResult = z.infer<typeof insertVerificationResultSchema>;
+export type Evaluator = typeof evaluators.$inferSelect;
+export type InsertEvaluator = z.infer<typeof insertEvaluatorSchema>;
 
 export const loginSchema = z.object({
   email: z.string().email("Invalid email address"),
